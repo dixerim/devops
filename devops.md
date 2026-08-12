@@ -1612,3 +1612,1327 @@ swap = disk backing для anonymous/private memory
 OOM killer спасает систему, а не бизнес-логику приложения
 ```
 
+# Network
+
+## 1. OSI, инкапсуляция и уровни
+
+**L1 / Physical** → сигнал и физическая среда: электричество/оптика/радио, bit rate/baud, шум, затухание.
+
+**L2 / Data Link** → локальная Ethernet-доставка: MAC, frame, switch.
+
+**L3 / Network** → доставка между IP-сетями: IP, routing, router, next hop.
+
+**L4 / Transport** → связь между процессами: TCP/UDP, ports.
+
+**L7 / Application** → HTTP, DNS, TLS и другие прикладные протоколы.
+
+**Инкапсуляция**:
+
+```text
+HTTP
+↓
+TLS
+↓
+TCP
+↓
+IP
+↓
+Ethernet
+```
+
+**Frame** → L2.  
+**Packet** → обычно IP/L3.  
+**Segment** → TCP/L4.
+
+---
+
+## 2. Ethernet, MAC и switch
+
+**MAC address** → L2-адрес интерфейса.
+
+**NIC** → Network Interface Card, сетевой интерфейс.
+
+**Switch** → пересылает Ethernet frames внутри L2-сегмента.
+
+**MAC table / CAM table** → `MAC → switch port`.
+
+**Flooding** → если нужный MAC неизвестен, frame рассылается по подходящим портам сегмента/VLAN.
+
+**Broadcast MAC** → `ff:ff:ff:ff:ff:ff`.
+
+**Ethernet II** → dst MAC, src MAC, EtherType, payload, FCS.
+
+**EtherType** → что лежит внутри Ethernet payload.
+
+**FCS / CRC** → обнаружение ошибок кадра; не криптографическая защита.
+
+**MTU** → максимальный IP-пакет, передаваемый через L2 без фрагментации; типично Ethernet MTU = 1500.
+
+---
+
+## 3. IPv4, subnet, mask, prefix
+
+**IPv4 address** → 32-битный L3-адрес интерфейса.
+
+**Subnet** → диапазон IP с общим сетевым префиксом.
+
+**Prefix `/24`** → первые 24 бита сеть, остальные host part.
+
+**Subnet mask** → другая запись prefix: `/24 = 255.255.255.0`.
+
+**Network address** → адрес подсети.
+
+**Broadcast address** → широковещательный адрес подсети.
+
+**`/32`** → один IPv4.
+
+**`/31`** → часто point-to-point link.
+
+---
+
+## 4. Gateway и routing
+
+**Routing table** → правила:
+
+```text
+destination prefix → next hop / interface
+```
+
+**Longest Prefix Match** → выбирается самый специфичный маршрут.
+
+**Default route** → `0.0.0.0/0`.
+
+**Default gateway** → next hop для default route.
+
+**Gateway не вычисляется из IP/маски** → он приходит из конфигурации, например DHCP.
+
+**Next hop** → следующий L3-узел, которому передаётся packet.
+
+---
+
+## 5. ARP / neighbour table
+
+**ARP** → Address Resolution Protocol; сопоставляет локальный next-hop IPv4 с MAC.
+
+```text
+нужен gateway 192.168.1.1
+↓
+ARP: "у кого 192.168.1.1?"
+↓
+получили MAC gateway
+↓
+Ethernet dst = MAC gateway
+```
+
+**ARP работает внутри локального L2-сегмента.**
+
+**Neighbour table** → кэш `IP → MAC` + состояние соседа.
+
+Если destination в другой subnet, ARP ищет MAC **router/next hop**, а не далёкого сервера.
+
+---
+
+## 6. IPv4 header, fragmentation и PMTUD
+
+**TTL** → уменьшается на каждом hop; при 0 packet уничтожается.
+
+**Fragmentation** → IPv4 может разбить большой packet на fragments.
+
+**DF / Don't Fragment** → запрет fragmentation.
+
+**PMTUD** → Path MTU Discovery, поиск максимального packet size на пути без fragmentation.
+
+**ICMP** → сообщения об ошибках/служебная диагностика, в том числе участвует в PMTUD.
+
+---
+
+## 7. Port, socket, bind и FD
+
+**Port** → L4-номер точки подключения процесса.
+
+**Socket** → kernel object для network endpoint/connection.
+
+**FD / File Descriptor** → integer handle процесса на kernel object, включая socket.
+
+**`bind()`** → привязать socket к локальному `IP:port`.
+
+**`listen()`** → начать ожидать входящие TCP connections.
+
+**`accept()`** → получить отдельный connected socket/FD.
+
+**TCP 4-tuple**:
+
+```text
+src IP
+src port
+dst IP
+dst port
+```
+
+**5-tuple** → то же + protocol.
+
+**Ephemeral port** → временный client source port, обычно выбранный ОС.
+
+---
+
+## 8. TCP: базовая модель
+
+**TCP** → надёжный двунаправленный byte stream.
+
+**Handshake**:
+
+```text
+SYN
+SYN-ACK
+ACK
+```
+
+**SEQ** → номер байта в stream.
+
+**ACK** → номер следующего ожидаемого байта.
+
+**Retransmission** → повторная отправка потерянных данных.
+
+**RTT** → Round Trip Time.
+
+**RTO** → Retransmission Timeout.
+
+**Fast Retransmit** → ранняя повторная отправка при признаках потери.
+
+**SACK** → Selective Acknowledgement.
+
+**rwnd** → receive window от получателя.
+
+**cwnd** → congestion window от congestion control.
+
+**MSS** → Maximum Segment Size, TCP payload без IP/TCP headers.
+
+---
+
+## 9. TCP close: FIN, RST, TIME_WAIT
+
+**FIN** → нормальное закрытие одного направления.
+
+**TCP full duplex** → направления закрываются независимо.
+
+**RST** → немедленный аварийный reset.
+
+**TIME_WAIT** → состояние активно закрывшей стороны; защищает от старых segments и позволяет повторить финальный ACK.
+
+---
+
+## 10. UDP
+
+**UDP** → datagram protocol без handshake, гарантии доставки, порядка и retransmission.
+
+**Datagram** → отдельное сообщение; границы сообщений сохраняются.
+
+**UDP `connect()`** → handshake не создаёт; фиксирует peer в socket state и упрощает API/фильтрацию.
+
+---
+
+## 11. DNS
+
+**DNS** → Domain Name System.
+
+**A** → IPv4.
+
+**AAAA** → IPv6.
+
+**CNAME** → alias на другое DNS name.
+
+**Resolver** → компонент, который выполняет DNS resolution.
+
+DNS сообщает адрес; дальше работают routing, ARP, TCP/UDP и т.д.
+
+---
+
+## 12. DHCP
+
+**DHCP** → Dynamic Host Configuration Protocol.
+
+**DORA**:
+
+```text
+Discover
+Offer
+Request
+ACK
+```
+
+DHCP Discover у клиента без IP:
+
+```text
+Ethernet dst = ff:ff:ff:ff:ff:ff
+IP src = 0.0.0.0
+IP dst = 255.255.255.255
+UDP src = 68
+UDP dst = 67
+```
+
+**xid / Transaction ID** → ID конкретного DHCP-обмена.
+
+**Lease** → аренда адреса.
+
+**Static lease / reservation** → конкретному MAC DHCP всегда выдаёт конкретный IP.
+
+---
+
+## 13. DHCP options
+
+DHCP может передать:
+
+**Subnet Mask** → mask/prefix.
+
+**Router** → default gateway.
+
+**DNS Servers** → resolver addresses.
+
+**Lease Time** → время аренды.
+
+**T1/T2** → моменты renewal/rebinding.
+
+**Domain Name / search suffix** → DNS suffix.
+
+**Interface MTU** → MTU.
+
+**NTP Servers** → Network Time Protocol servers.
+
+DHCP только сообщает параметры; ОС сама настраивает interface, routes и resolver.
+
+---
+
+## 14. VLAN
+
+**VLAN** → Virtual Local Area Network, логическое разделение L2-инфраструктуры на отдельные broadcast domains.
+
+**Broadcast одного VLAN не разливается в другой VLAN.**
+
+**VLAN ≠ subnet.**
+
+VLAN → L2.  
+Subnet → L3.
+
+На практике часто:
+
+```text
+VLAN 10 ↔ 10.10.10.0/24
+VLAN 20 ↔ 10.10.20.0/24
+```
+
+Между VLAN нужен L3 routing.
+
+---
+
+## 15. DHCP relay
+
+**Проблема** → DHCP Discover broadcast не маршрутизируется между подсетями.
+
+**DHCP relay** → принимает локальный DHCP broadcast и пересылает DHCP server'у unicast.
+
+**`giaddr`** → Gateway IP Address; помогает server понять, из какой subnet пришёл client.
+
+**Option 82** → relay может добавить switch port/VLAN/circuit information.
+
+---
+
+## 16. NAT
+
+**NAT** → Network Address Translation.
+
+Пример исходящего NAT:
+
+```text
+192.168.1.10:51514
+↓
+203.0.113.5:40001
+```
+
+Router хранит mapping и делает обратную трансляцию на reply.
+
+**PAT** → Port Address Translation; много внутренних clients делят один public IP через разные внешние ports.
+
+---
+
+## 17. SNAT, DNAT, MASQUERADE
+
+**SNAT** → Source NAT:
+
+```text
+192.168.1.10:51514
+→
+203.0.113.5:40001
+```
+
+**DNAT** → Destination NAT:
+
+```text
+203.0.113.5:443
+→
+192.168.1.20:8443
+```
+
+**Port forwarding** → типичный DNAT scenario.
+
+**MASQUERADE** → SNAT с текущим IP исходящего interface; удобно при dynamic external IP.
+
+---
+
+## 18. Conntrack / stateful NAT
+
+**conntrack** → отслеживание состояния connections/flows.
+
+Удобная модель через 5-tuple:
+
+```text
+protocol
+src IP
+src port
+dst IP
+dst port
+```
+
+**Stateful NAT** → знает, какой reverse packet относится к какому уже известному flow.
+
+**UDP** → FIN/handshake нет, state в основном живёт по timeout.
+
+---
+
+## 19. Hairpin NAT и CGNAT
+
+**Hairpin NAT / NAT loopback** → client из LAN обращается к public IP своего же router и попадает обратно на internal server.
+
+**CGNAT** → Carrier-Grade NAT, дополнительный NAT у ISP.
+
+```text
+192.168.x.x
+↓ home NAT
+100.64.0.0/10
+↓ ISP CGNAT
+public IP
+```
+
+**Следствие** → local port forwarding может не работать, если настоящий public IP контролирует ISP NAT.
+
+---
+
+## 20. STUN
+
+**STUN** → Session Traversal Utilities for NAT.
+
+Client спрашивает STUN server:
+
+> «С какого IP:port ты меня видишь?»
+
+```text
+internal = 10.0.0.20:60000
+external mapping = 2.2.2.2:45000
+```
+
+Важно:
+
+**STUN mapping ≠ гарантированно открытый public socket.**
+
+Это лишь:
+
+> «Вот как NAT отобразил меня при разговоре со STUN server».
+
+---
+
+## 21. UDP hole punching
+
+Alice и Bob узнают external mappings через STUN и обмениваются ими через signaling.
+
+Потом обе стороны начинают слать UDP друг другу:
+
+```text
+Alice → Bob
+Bob → Alice
+```
+
+Так NAT на каждой стороне видит исходящий flow к конкретному peer и может разрешить reverse traffic.
+
+**Строгий NAT/firewall** может сказать незнакомому external peer:
+
+> «Я вас не звал».
+
+**Symmetric NAT** → external mapping может зависеть от destination; mapping к STUN server может не совпасть с mapping к реальному peer.
+
+---
+
+## 22. TURN
+
+**TURN** → Traversal Using Relays around NAT.
+
+Если direct P2P не работает:
+
+```text
+Alice
+↓
+TURN relay
+↓
+Bob
+```
+
+**STUN** → mapping/connectivity assistance.
+
+**TURN** → реальный relay, через него идёт traffic.
+
+---
+
+## 23. ICE
+
+**ICE** → Interactive Connectivity Establishment.
+
+Это **алгоритм/логика внутри client/library**, например WebRTC stack, а не отдельный server.
+
+ICE собирает candidates:
+
+**host candidate** → local endpoint.
+
+**server-reflexive candidate** → NAT mapping через STUN.
+
+**relay candidate** → endpoint на TURN.
+
+ICE строит **candidate pairs**, даёт им priorities, делает connectivity checks и выбирает рабочую пару.
+
+**Candidate** → возможный endpoint, не готовый route.
+
+**Nomination** → выбор рабочей pair.
+
+---
+
+## 24. Firewall
+
+**Firewall** → решает, пропустить packet или нет.
+
+**ACCEPT** → пропустить.
+
+**DROP** → молча выбросить.
+
+**REJECT** → отклонить и вернуть ошибку.
+
+**Stateful firewall** → использует conntrack.
+
+Типичная модель:
+
+```text
+outgoing NEW → allow
+incoming ESTABLISHED → allow
+incoming NEW → deny unless explicitly allowed
+```
+
+---
+
+## 25. INPUT, OUTPUT, FORWARD
+
+На Linux:
+
+**INPUT** → packet предназначен самому host.
+
+**OUTPUT** → packet создан local process.
+
+**FORWARD** → packet транзитом проходит через host/router.
+
+**Reverse proxy ≠ FORWARD.**
+
+```text
+client → nginx   = INPUT для nginx host
+nginx → backend  = OUTPUT для nginx host
+```
+
+Это два разных TCP connections.
+
+---
+
+## 26. Порядок DNAT, routing, firewall и SNAT
+
+Упрощённо:
+
+```text
+packet arrives
+↓
+PREROUTING
+↓
+DNAT
+↓
+routing decision
+↓
+INPUT или FORWARD
+↓
+firewall filtering
+↓
+POSTROUTING
+↓
+SNAT / MASQUERADE
+↓
+network
+```
+
+**DNAT** обычно рано, до routing decision.
+
+**SNAT** обычно поздно, перед отправкой наружу.
+
+Нельзя говорить «NAT всегда раньше firewall» или наоборот.
+
+---
+
+## 27. Firewall policy и порядок rules
+
+Rules идут сверху вниз.
+
+**Первое совпавшее rule побеждает.**
+
+```text
+1. src 10.0.5.20 → dst :5432 → ACCEPT
+2. dst :5432                 → DROP
+```
+
+**Default ACCEPT** → разрешено всё, что не запрещено.
+
+**Default DROP / default deny** → запрещено всё, что явно не разрешено.
+
+Для server security обычно удобнее default deny.
+
+---
+
+## 28. Bind address
+
+**`127.0.0.1:3000`** → только loopback/local host.
+
+**`192.168.0.10:3000`** → listener только на этом local IP.
+
+**`0.0.0.0:3000`** → wildcard bind на все local IPv4.
+
+**`[::]:3000`** → wildcard IPv6 bind.
+
+Mental model:
+
+**Bind** → «ГДЕ service слушает?»
+
+**Firewall** → «КОМУ туда можно?»
+
+**Routing/NAT** → «КАК туда добраться?»
+
+Bind на private IP полезен как дополнительное ограничение, но не заменяет firewall.
+
+---
+
+## 29. Reverse proxy и forward proxy
+
+**Reverse proxy** → proxy со стороны server/backends:
+
+```text
+Client
+↓
+Reverse Proxy
+↓
+Backend
+```
+
+Он может делать routing по Host/path, headers, auth, rate limit, TLS termination, load balancing.
+
+**Forward proxy** → proxy со стороны client:
+
+```text
+Client
+↓
+Forward Proxy
+↓
+Internet
+```
+
+Мнемоника:
+
+**Forward proxy скрывает clients.**  
+**Reverse proxy скрывает servers.**
+
+Названия не означают, что packet физически идёт «вперёд/назад».
+
+---
+
+## 30. Gateway vs proxy
+
+**Gateway** → более широкая точка входа/выхода между системами.
+
+Gateway может включать:
+
+- reverse proxy;
+- auth;
+- rate limiting;
+- TLS termination;
+- load balancing;
+- protocol translation;
+- observability;
+- иногда routing/NAT.
+
+**Reverse proxy** → одна из возможных функций gateway.
+
+---
+
+## 31. Load balancer
+
+**Load balancer / LB** → распределяет requests/connections между несколькими backends.
+
+**Round Robin** → по очереди.
+
+**Least Connections** → backend с меньшим числом connections.
+
+**Hash** → выбор по client IP/cookie/key.
+
+Удобно разделять:
+
+**Reverse proxy** → выбрать backend pool/service.
+
+**Load balancer** → выбрать конкретный instance в pool.
+
+Один Nginx/HAProxy/Envoy может делать оба.
+
+---
+
+## 32. L4 vs L7 load balancing
+
+**L4 LB** → TCP/UDP level; HTTP понимать не обязан.
+
+**L7 LB** → application level, например HTTP.
+
+Может route'ить по:
+
+```text
+Host
+path
+headers
+cookie
+```
+
+Чтобы читать HTTPS как HTTP, L7 proxy обычно должен terminate TLS.
+
+---
+
+## 33. TLS: что даёт
+
+**TLS** → Transport Layer Security.
+
+**Confidentiality** → traffic нельзя прочитать без keys.
+
+**Integrity/authenticity of data** → незаметно изменить ciphertext нельзя.
+
+**Server authentication** → client проверяет identity server.
+
+**TLS не «шифрует TCP»** → TLS создаёт защищённые bytes и пишет их в TCP stream.
+
+---
+
+## 34. Certificate, PKI и trust
+
+**X.509 certificate** → identity + public key + validity + extensions + CA signature.
+
+**PKI** → Public Key Infrastructure.
+
+**CA** → Certificate Authority.
+
+**Leaf certificate** → cert конкретного domain/server.
+
+**Intermediate CA** → промежуточный CA.
+
+**Root CA / trust anchor** → локально доверенный root.
+
+**Trust store** → набор trusted roots.
+
+Chain:
+
+```text
+leaf
+↓
+intermediate
+↓
+root
+```
+
+Root обычно не присылается server'ом; client уже доверяет ему локально.
+
+---
+
+## 35. CSR и private key
+
+**Private key генерируется у владельца и CA не отправляется.**
+
+**CSR** → Certificate Signing Request; содержит public key и данные запроса, подписанные applicant private key.
+
+CA возвращает certificate, а не private key.
+
+---
+
+## 36. Certificate formats
+
+**DER** → binary encoding.
+
+**PEM** → Base64 armor вокруг DER.
+
+**PKCS#7** → обычно certificate chain, без private key.
+
+**PKCS#12** → может содержать certificate + chain + private key.
+
+File extension не всегда гарантирует формат.
+
+---
+
+## 37. TLS 1.3 handshake
+
+После TCP:
+
+```text
+ClientHello
+↓
+ServerHello
+↓
+Diffie–Hellman
+↓
+shared secret
+↓
+handshake traffic keys
+
+[encrypted handshake]
+
+EncryptedExtensions
+Certificate
+CertificateVerify
+Finished
+
+Client Finished
+
+↓
+application traffic keys
+↓
+encrypted HTTP
+```
+
+---
+
+## 38. ClientHello
+
+Содержит, упрощённо:
+
+**SNI** → Server Name Indication, domain name для TLS virtual hosting.
+
+**ALPN** → Application-Layer Protocol Negotiation, например `h2` / `http/1.1`.
+
+**TLS versions**
+
+**cipher suites**
+
+**supported groups**
+
+**key_share / client public DH value**
+
+---
+
+## 39. ServerHello и cipher suite
+
+Server выбирает TLS parameters.
+
+Примеры TLS 1.3 cipher suites:
+
+```text
+TLS_CHACHA20_POLY1305_SHA256
+TLS_AES_128_GCM_SHA256
+```
+
+**ChaCha20-Poly1305 / AES-GCM** → symmetric protection TLS records.
+
+**SHA-256** → hash для TLS transcript/key schedule logic.
+
+В TLS 1.3 cipher suite не выбирает certificate signature algorithm или X25519 group; они согласуются отдельно.
+
+---
+
+## 40. Diffie–Hellman / X25519
+
+**DH** → key agreement, не encryption.
+
+```text
+Client:
+DH(client_private, server_public)
+→ shared_secret
+
+Server:
+DH(server_private, client_public)
+→ same shared_secret
+```
+
+**Passive sniffer** видит publics, но practically не восстанавливает original secret.
+
+**Active MITM** может подменить public values и создать:
+
+```text
+Client ↔ Attacker
+Attacker ↔ Server
+```
+
+Поэтому голый DH не аутентифицирует peer.
+
+---
+
+## 41. CertificateVerify
+
+**Certificate** говорит:
+
+> «Этот public key допустимо считать ключом domain, если chain/hostname/time/usage валидны».
+
+**CertificateVerify** говорит:
+
+> «Текущий handshake peer реально владеет matching private key».
+
+Упрощённо:
+
+```text
+signature =
+Sign(cert_private_key, handshake_transcript_hash)
+```
+
+Client проверяет signature через public key leaf certificate.
+
+---
+
+## 42. Finished
+
+**Finished** → финальная cryptographic check, что стороны:
+
+- получили совместимые handshake secrets;
+- видели тот же handshake transcript.
+
+Server Finished → client verifies.  
+Client Finished → server verifies.
+
+После этого TLS handshake завершён.
+
+---
+
+## 43. TLS record protection
+
+После `ServerHello` дальнейшие server handshake messages TLS 1.3 уже защищены handshake traffic keys.
+
+После Finished используются **application traffic keys**.
+
+Если выбран:
+
+```text
+TLS_CHACHA20_POLY1305_SHA256
+```
+
+TLS records защищаются ChaCha20-Poly1305.
+
+---
+
+## 44. TLS termination, re-encryption, passthrough
+
+**Termination**:
+
+```text
+Client --HTTPS--> Proxy --HTTP--> Backend
+```
+
+TLS заканчивается на proxy; private key certificate нужен proxy.
+
+**Termination + re-encryption**:
+
+```text
+Client --HTTPS--> Proxy --HTTPS--> Backend
+```
+
+Два независимых TLS connections.
+
+**TLS passthrough**:
+
+```text
+Client ===== encrypted TLS =====> Backend
+            через L4 proxy/LB
+```
+
+Proxy не расшифровывает HTTP.
+
+---
+
+## 45. mTLS
+
+**mTLS** → mutual TLS.
+
+Обычный TLS:
+
+```text
+client verifies server
+```
+
+mTLS:
+
+```text
+client verifies server
++
+server verifies client certificate
+```
+
+Server отправляет **CertificateRequest**.
+
+Client отвечает:
+
+```text
+Certificate
+CertificateVerify
+Finished
+```
+
+mTLS — обычный TLS с дополнительной client certificate authentication.
+
+---
+
+## 46. mTLS и ClientHello
+
+Специального:
+
+```text
+mTLS = true
+```
+
+в ClientHello нет.
+
+Начало handshake обычное; client certificate появляется только после `CertificateRequest` от server.
+
+---
+
+## 47. HTTP Host
+
+```http
+Host: api.example.com
+```
+
+Позволяет одному IP:port обслуживать несколько HTTP virtual hosts.
+
+Reverse proxy может route'ить:
+
+```text
+Host: api.example.com
+→ api backend
+
+Host: admin.example.com
+→ admin backend
+```
+
+---
+
+## 48. SNI vs HTTP Host
+
+**SNI** → TLS layer, ClientHello, нужен до HTTP для выбора TLS certificate.
+
+**Host** → HTTP layer, виден после расшифровки TLS, нужен для HTTP virtual host/routing.
+
+```text
+DNS
+↓
+TCP
+↓
+TLS ClientHello: SNI
+↓
+certificate
+↓
+TLS handshake
+↓
+HTTP Host
+↓
+backend routing
+```
+
+---
+
+## 49. X-Forwarded-For
+
+Через reverse proxy backend видит TCP peer = proxy, а не original client.
+
+```text
+Client 1.2.3.4
+↓
+Nginx 10.0.0.5
+↓
+Backend
+```
+
+Proxy передаёт:
+
+```http
+X-Forwarded-For: 1.2.3.4
+```
+
+Если proxies несколько, header может содержать chain.
+
+**Security** → нельзя слепо доверять X-Forwarded-For от любого client; client сам может его подделать.
+
+Trusted forwarded headers должны приниматься только от известных proxies.
+
+---
+
+## 50. X-Forwarded-Proto / Host / Port / Forwarded
+
+**`X-Forwarded-Proto`** → исходная схема:
+
+```http
+X-Forwarded-Proto: https
+```
+
+Полезно при TLS termination.
+
+**`X-Forwarded-Host`** → original hostname.
+
+**`X-Forwarded-Port`** → original port.
+
+**`Forwarded`** → стандартизированный header:
+
+```http
+Forwarded: for=1.2.3.4;proto=https;host=api.example.com
+```
+
+---
+
+## 51. HTTP keep-alive / persistent connection
+
+**Один HTTP request ≠ один TCP connection.**
+
+```text
+TCP connection
+↓
+GET /a
+response
+↓
+GET /b
+response
+```
+
+Connection reuse уменьшает TCP/TLS handshake overhead.
+
+HTTP/1.1 persistent connection — нормальный режим.
+
+---
+
+## 52. HTTP/2 multiplexing
+
+**Multiplexing** → несколько независимых HTTP streams внутри одного TCP connection.
+
+```text
+TCP connection
+├─ stream 1
+├─ stream 3
+└─ stream 5
+```
+
+---
+
+## 53. Backend connection pools
+
+Reverse proxy может держать pool connections к backends:
+
+```text
+Nginx
+├─ TCP #1 → backend1
+├─ TCP #2 → backend1
+├─ TCP #3 → backend2
+```
+
+Request берёт свободное connection; после response оно может быть переиспользовано.
+
+---
+
+## 54. HTTP keep-alive vs TCP keepalive
+
+**HTTP keep-alive** → reuse connection для новых HTTP requests.
+
+**TCP keepalive** → проверить, жив ли давно молчащий peer.
+
+Это разные механизмы.
+
+---
+
+## 55. Reverse proxy timeouts
+
+**Connect timeout** → сколько ждать установления connection с backend.
+
+Причины проблем: backend down, no listener, firewall, route, overload.
+
+**Read timeout** → connection уже есть, request отправлен, backend слишком долго не присылает data.
+
+Частый итог → `504`.
+
+**Idle / keepalive timeout** → сколько держать неиспользуемое connection открытым.
+
+---
+
+## 56. 502 vs 504
+
+Грубая полезная модель:
+
+**502 Bad Gateway** → upstream communication **BROKEN**.
+
+Например connection refused/reset, invalid response, upstream TLS failure.
+
+**504 Gateway Timeout** → upstream communication **TOO SLOW**.
+
+Точное mapping зависит от proxy.
+
+---
+
+## 57. Таймауты слоями
+
+```text
+Client
+↓
+CDN
+↓
+Cloud LB
+↓
+Ingress
+↓
+Service Mesh
+↓
+App
+```
+
+У каждого слоя свой timeout.
+
+Если request стабильно падает ровно через N секунд → искать intermediate proxy/LB с timeout около N.
+
+---
+
+## 58. End-to-end картина
+
+```text
+DNS
+↓
+IP
+↓
+routing
+↓
+ARP to next hop
+↓
+TCP handshake
+↓
+TLS handshake
+↓
+encrypted HTTP
+↓
+reverse proxy
+↓
+HTTP routing / load balancing
+↓
+backend
+```
+
+Если service за NAT:
+
+```text
+private host
+↓
+SNAT/PAT
+↓
+public Internet
+```
+
+Если входящий traffic публикуется внутрь:
+
+```text
+public IP:port
+↓
+DNAT / port forwarding
+↓
+firewall
+↓
+private service
+```
+
+Если P2P за NAT:
+
+```text
+ICE
+├─ host
+├─ STUN → server-reflexive
+└─ TURN → relay
+```
+
+---
+
+## 59. Диагностический маршрут
+
+Если «не работает сеть», быстро пройти:
+
+```text
+1. DNS разрешился?
+2. Есть route?
+3. Правильный next hop?
+4. ARP/neighbour жив?
+5. TCP handshake проходит?
+6. Port слушается?
+7. Bind address правильный?
+8. Firewall не режет?
+9. NAT/DNAT/SNAT ожидаемый?
+10. TLS handshake проходит?
+11. Certificate/SNI/hostname правильные?
+12. Proxy подключается к backend?
+13. Backend отвечает до timeout?
+14. Forwarded headers настроены корректно?
+```
+
+---
+
+## 60. Что не склеивать
+
+**VLAN ≠ subnet**
+
+**NAT ≠ firewall**
+
+**Reverse proxy ≠ router**
+
+**Reverse proxy ≠ load balancer**
+
+**Gateway ≠ reverse proxy**
+
+**TLS ≠ TCP encryption**
+
+**DH ≠ encryption**
+
+**Certificate ≠ доказательство текущего владения private key**
+
+**STUN ≠ TURN**
+
+**STUN mapping ≠ гарантированно открытый public socket**
+
+**HTTP keep-alive ≠ TCP keepalive**
+
+**SNI ≠ Host**
+
+**INPUT/OUTPUT/FORWARD ≠ forward/reverse proxy terminology**
+
+---
+
+## 61. Минимальный DevOps mental model
+
+```text
+Bind
+→ где service слушает
+
+Firewall
+→ кому разрешён traffic
+
+Routing
+→ куда отправить packet
+
+NAT
+→ какие IP/ports переписать
+
+Proxy
+→ кто принимает connection вместо backend
+
+Load Balancer
+→ какой backend выбрать
+
+TLS
+→ как защитить bytes и аутентифицировать peer
+
+HTTP
+→ что именно просит application client
+```
