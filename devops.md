@@ -117,7 +117,7 @@ parent task_struct
 
 ```text
 parent task_struct → parent mm_struct ─┐
-                                      ├→ те же физические страницы
+                                       ├→ те же физические страницы
 child task_struct  → child mm_struct  ─┘
 ```
 
@@ -803,7 +803,7 @@ ln file.txt another.txt
 
 ```text
 file.txt    ─┐
-            ├→ один inode
+             ├→ один inode
 another.txt ─┘
 ```
 
