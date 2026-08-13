@@ -204,7 +204,7 @@ execve() → новая программа в старом PID
 
 **`SIGTERM`** → просьба корректно завершиться.
 
-**`SIGKILL`** → немедленное убийство; нельзя поймать, заблокировать или игнорировать.
+**`SIGKILL`** → принудительное завершение; сигнал нельзя поймать, заблокировать или игнорировать, но task может завершиться не мгновенно, например пока находится в uninterruptible sleep (D-state).
 
 **`SIGSTOP`** → остановка; нельзя поймать или игнорировать.
 
@@ -257,7 +257,7 @@ flowchart TD
     R --> S["Kernel инициирует group exit"]
     S --> T["Завершается вся thread group"]
 
-    J -->|"ignored"| U["Signal отбрасывается<br/>или остаётся pending по правилам mask"]
+    J -->|"ignored"| U["signal discarded"]
 ```
 
 ## Короткая модель
@@ -505,11 +505,11 @@ CPU низкий, load 20.0
 
 **MMU** → переводит virtual address в physical address.
 
-**Page table** → таблица соответствия virtual page → physical page / backing.
+**Page table** → `virtual page → physical page frame + flags`.
 
 **TLB** → кеш переводов виртуальных адресов.
 
-**VMA** → диапазон виртуальной памяти с одинаковыми свойствами.
+**VMA** → диапазон virtual addresses с общими permissions и backing/mapping properties.
 
 **Page fault** → нужного mapping/page сейчас нет или нарушены права.
 
@@ -539,7 +539,7 @@ CPU низкий, load 20.0
 
 ## 15. RAM: основные категории
 
-**Anonymous memory** → heap, stack, globals, anonymous mmap.
+**Anonymous memory** → heap, stack, anonymous mmap, private COW pages.
 
 **File-backed memory** → executable, `.so`, mmap-файлы.
 
@@ -1299,11 +1299,11 @@ Restart=on-failure
 
 Типы:
 
-**`Type=simple`** → процесс запущен.
+**`Type=simple`** → systemd считает service started сразу после запуска процесса; готовности приложения не ждёт.
 
-**`Type=exec`** → `execve()` успешен.
+**`Type=exec`** → systemd считает запуск успешным после успешного `execve()`.
 
-**`Type=notify`** → приложение отправило `READY=1`.
+**`Type=notify`** → приложение явно сообщает `READY=1`.
 
 **`Type=oneshot`** → короткая команда должна завершиться.
 
@@ -1313,7 +1313,7 @@ Restart=on-failure
 
 **`Wants=`** → мягко добавить unit в transaction.
 
-**`Requires=`** → жёсткая зависимость запуска/остановки.
+**`Requires=`** → сильная requirement dependency: dependency включается в transaction, и её failure/deactivation может повлиять на requiring unit.
 
 Порядок:
 
