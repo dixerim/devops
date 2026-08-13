@@ -125,7 +125,7 @@ child task_struct  → child mm_struct  ─┘
 
 - у родителя и ребёнка **разные `mm_struct`**;
 - у них **разные page tables**;
-- PTE на приватные страницы помечаются как read-only/COW;
+- PTE (Page Table Entry, запись в таблице страниц) на приватные страницы помечаются как read-only/COW;
 - физические страницы временно общие;
 - при первой записи возникает page fault;
 - ядро выделяет новую физическую страницу;
@@ -222,7 +222,92 @@ execve() → новая программа в старом PID
 
 **Realtime signals** → `SIGRTMIN..SIGRTMAX`, очередятся и могут нести значение.
 
-Подробнее: [схема прохождения `SIGTERM`](./sighandling.md).
+### Linux signal handling: пример `SIGTERM`
+
+Сигнал в Linux лучше думать не как «мгновенный прыжок в handler», а как событие,
+которое сначала становится pending, а потом доставляется конкретному `task_struct`
+перед возвратом этого task в userspace.
+
+```mermaid
+flowchart TD
+    A["SIGTERM generated"] --> B{"Как адресован сигнал?"}
+
+    B -->|"kill(pid, SIGTERM)"| C["Process-directed signal"]
+    C --> D["Кладётся в shared pending<br/>thread group / signal_struct"]
+    D --> E["Kernel выбирает один подходящий task<br/>у которого SIGTERM не blocked"]
+
+    B -->|"tgkill(tgid, tid, SIGTERM)<br/>pthread_kill(thread, SIGTERM)"| F["Thread-directed signal"]
+    F --> G["Кладётся в private pending<br/>конкретного task_struct"]
+    G --> H["Target task будет проверен<br/>перед возвратом в userspace"]
+
+    E --> I["Delivery в конкретный task"]
+    H --> I
+
+    I --> J{"Disposition для SIGTERM<br/>в shared sighand_struct"}
+
+    J -->|"handler установлен"| K["Kernel строит signal frame<br/>на stack выбранного task"]
+    K --> L["Меняет userspace registers:<br/>следующая инструкция = handler"]
+    L --> M["Task выполняет handler<br/>как обычный userspace-код"]
+    M --> N{"Что сделал handler?"}
+    N -->|"return"| O["Task продолжает выполнение<br/>с места прерывания"]
+    N -->|"pthread_exit()"| P["Завершается текущий task/thread"]
+    N -->|"exit() / exit_group()"| Q["Завершается вся thread group"]
+
+    J -->|"default action = terminate"| R["Handler не запускается"]
+    R --> S["Kernel инициирует group exit"]
+    S --> T["Завершается вся thread group"]
+
+    J -->|"ignored"| U["Signal отбрасывается<br/>или остаётся pending по правилам mask"]
+```
+
+## Короткая модель
+
+```text
+pending signal:
+  - group-level: shared pending в signal_struct
+  - task-level: private pending в конкретном task_struct
+
+handler/disposition:
+  - общий для thread group через sighand_struct
+
+handler execution:
+  - всегда в одном конкретном task
+  - на stack этого task
+
+default terminate/stop/continue/core:
+  - действует на всю thread group
+```
+
+## Примеры
+
+```text
+kill(pid, SIGTERM), handler есть
+→ signal pending на thread group
+→ kernel выбирает один task
+→ handler выполняется в этом task
+
+kill(pid, SIGTERM), handler нет
+→ default terminate
+→ завершается вся thread group
+
+pthread_kill(thread, SIGTERM), handler есть
+→ signal pending на конкретный task
+→ handler выполняется в этом task
+
+pthread_kill(thread, SIGTERM), handler нет
+→ default terminate
+→ завершается вся thread group
+```
+
+Главная формула:
+
+```text
+pending бывает group-level или task-level;
+handler/disposition общий для thread group;
+handler выполняется в одном task;
+fatal/job-control default action действует на всю thread group.
+```
+
 
 ---
 
@@ -554,7 +639,7 @@ write()
 
 **Swap-in** → page fault возвращает страницу в RAM.
 
-**`swappiness`** → относительный вес reclaim anonymous memory против file cache; не процент заполнения RAM.
+**`swappiness`** → насколько охотно ядро выгружает приватную память процессов в swap вместо того, чтобы освобождать файловый кеш; это не процент заполнения RAM.
 
 Плохо не само `SwapUsed`, а:
 
@@ -620,7 +705,7 @@ path
 
 ## 21. Inode
 
-**Inode** → объект файла без имени.
+**Inode** → безымянный объект filesystem: обычный файл, каталог, symlink, socket, FIFO или device node.
 
 Обычно хранит:
 
@@ -1258,7 +1343,43 @@ systemctl show
 
 ---
 
-## 43. journald
+## 43. D-Bus
+
+**D-Bus** → userspace message bus для IPC между процессами.
+
+Обычно есть два bus:
+
+**System bus** → системные сервисы: systemd, NetworkManager, login/session management.
+
+**Session bus** → процессы внутри пользовательской сессии.
+
+Транспорт обычно Unix socket.
+
+Модель:
+
+```text
+client
+→ bus daemon / broker
+→ service
+```
+
+Основные сущности:
+
+**Bus name** → имя сервиса на bus, например `org.freedesktop.systemd1`.
+
+**Object path** → путь объекта внутри сервиса, например `/org/freedesktop/systemd1`.
+
+**Interface** → набор methods/properties/signals.
+
+**Method call** → запрос к сервису.
+
+**Signal** → broadcast/event от сервиса подписчикам.
+
+`systemctl` общается с systemd в основном через D-Bus API.
+
+---
+
+## 44. journald
 
 **journald** → сборщик structured logs systemd.
 
@@ -1285,7 +1406,7 @@ journalctl -k
 
 ---
 
-## 44. `dmesg`
+## 45. `dmesg`
 
 **`dmesg`** → просмотр kernel ring buffer: сообщений, которые пишет ядро.
 
@@ -1325,7 +1446,7 @@ journald / journalctl
 
 ---
 
-## 45. Environment variables
+## 46. Environment variables
 
 **Environment** → массив строк `KEY=VALUE`, переданный в `execve()`.
 
@@ -1352,7 +1473,7 @@ EnvironmentFile=/etc/myapp/env
 
 ---
 
-## 46. Secrets
+## 47. Secrets
 
 Secret в env после старта становится обычной частью environment процесса.
 
@@ -1377,7 +1498,7 @@ Secret в env после старта становится обычной час
 
 ---
 
-## 47. UID, GID и permissions
+## 48. UID, GID и permissions
 
 **UID** → пользователь.
 
@@ -1455,7 +1576,7 @@ x traverse
 
 ---
 
-## 48. setuid, setgid, sticky
+## 49. setuid, setgid, sticky
 
 **setuid executable** → effective UID становится UID владельца файла при `execve()`.
 
@@ -1471,9 +1592,43 @@ chmod 2755 dir
 chmod 1777 dir
 ```
 
+Как это выглядит в `ls -l`:
+
+```text
+-rwsr-xr-x  root root  /usr/bin/passwd
+```
+
+`s` на месте owner execute означает `setuid` + executable.
+
+```text
+-rwxr-sr-x  root staff  ./tool
+```
+
+`s` на месте group execute означает `setgid` + executable.
+
+```text
+drwxrwsr-x  root dev  ./shared-project
+```
+
+`s` на месте group execute у каталога означает `setgid directory`: новые файлы наследуют группу каталога.
+
+```text
+drwxrwxrwt  root root  /tmp
+```
+
+`t` на месте others execute означает sticky directory.
+
+Если execute-бит не выставлен, буква становится заглавной:
+
+```text
+-rwSr--r--  setuid есть, owner execute нет
+-rw-r-Sr--  setgid есть, group execute нет
+drwxrwxrwT  sticky есть, others execute нет
+```
+
 ---
 
-## 49. Capabilities
+## 50. Capabilities
 
 **Capabilities** → дробление root-привилегий.
 
@@ -1499,7 +1654,7 @@ CapabilityBoundingSet=CAP_NET_BIND_SERVICE
 
 ---
 
-## 50. Диагностические цепочки
+## 51. Диагностические цепочки
 
 Сервис не стартует:
 
@@ -1563,55 +1718,6 @@ cat /proc/<PID>/stack
 journalctl -k
 ```
 
----
-
-# Главные формулы
-
-```text
-process = thread group из task_struct + общие ресурсы
-```
-
-```text
-clone flags определяют, что новая task_struct разделяет со старой
-```
-
-```text
-fork = новый PID + отдельный mm_struct + COW physical pages
-```
-
-```text
-exec = новая программа в старом PID
-```
-
-```text
-path → dentry → inode
-```
-
-```text
-fd → struct file → path(mount+dentry) → inode → implementation
-```
-
-```text
-rm удаляет имя; inode живёт, пока есть hard links или открытые ссылки
-```
-
-```text
-VFS = единый интерфейс, а filesystem/driver подставляет callbacks
-```
-
-```text
-load average = сглаженные R + D, а не процент CPU
-```
-
-```text
-page cache = содержимое файлов в RAM
-swap = disk backing для anonymous/private memory
-```
-
-```text
-OOM killer спасает систему, а не бизнес-логику приложения
-```
-
 # Network
 
 ## 1. OSI, инкапсуляция и уровни
@@ -1641,7 +1747,7 @@ Ethernet
 ```
 
 **Frame** → L2.  
-**Packet** → обычно IP/L3.  
+**Packet** → IP/L3.  
 **Segment** → TCP/L4.
 
 ---
@@ -1656,13 +1762,23 @@ Ethernet
 
 **MAC table / CAM table** → `MAC → switch port`.
 
-**Flooding** → если нужный MAC неизвестен, frame рассылается по подходящим портам сегмента/VLAN.
+**MAC learning** → switch запоминает `src MAC → ingress port` из входящих frames.
+
+**Flooding** → `dst MAC` в Ethernet frame есть всегда; если switch не знает port для этого MAC в MAC table, frame рассылается по подходящим портам VLAN, кроме входного.
 
 **Broadcast MAC** → `ff:ff:ff:ff:ff:ff`.
 
 **Ethernet II** → dst MAC, src MAC, EtherType, payload, FCS.
 
 **EtherType** → что лежит внутри Ethernet payload.
+
+Примеры:
+
+```text
+0x0800 → IPv4
+0x86DD → IPv6
+0x0806 → ARP
+```
 
 **FCS / CRC** → обнаружение ошибок кадра; не криптографическая защита.
 
@@ -1674,19 +1790,64 @@ Ethernet
 
 **IPv4 address** → 32-битный L3-адрес интерфейса.
 
+Пример: `192.168.1.10`.
+
 **Subnet** → диапазон IP с общим сетевым префиксом.
+
+Пример: `192.168.1.0/24` содержит адреса `192.168.1.0`–`192.168.1.255`.
 
 **Prefix `/24`** → первые 24 бита сеть, остальные host part.
 
+Пример: в `192.168.1.10/24` сеть — `192.168.1`, host part — `10`.
+
 **Subnet mask** → другая запись prefix: `/24 = 255.255.255.0`.
+
+Пример: `192.168.1.10/255.255.255.0` то же самое, что `192.168.1.10/24`.
 
 **Network address** → адрес подсети.
 
+Пример: для `192.168.1.10/24` network address — `192.168.1.0`.
+
 **Broadcast address** → широковещательный адрес подсети.
+
+Пример: для `192.168.1.10/24` broadcast address — `192.168.1.255`.
 
 **`/32`** → один IPv4.
 
+Пример: `192.168.1.10/32` означает только адрес `192.168.1.10`.
+
 **`/31`** → часто point-to-point link.
+
+Пример: `10.0.0.0/31` даёт два адреса для двух концов link: `10.0.0.0` и `10.0.0.1`.
+
+Сколько адресов можно назначать хостам:
+
+```text
+всего адресов в subnet = 2^(32 - prefix)
+обычно usable = всего - 2
+```
+
+Два адреса обычно не назначают хостам:
+
+- network address;
+- broadcast address.
+
+Пример:
+
+```text
+192.168.1.0/24
+→ всего 256 адресов
+→ usable 254 адреса: 192.168.1.1–192.168.1.254
+→ 192.168.1.0   = network address
+→ 192.168.1.255 = broadcast address
+```
+
+Исключения:
+
+```text
+/31 → 2 usable адреса для point-to-point link
+/32 → 1 адрес, один host route
+```
 
 ---
 
@@ -1698,15 +1859,64 @@ Ethernet
 destination prefix → next hop / interface
 ```
 
+Пример:
+
+```text
+192.168.1.0/24 → directly connected, eth0
+10.0.0.0/8     → via 192.168.1.1, eth0
+0.0.0.0/0      → via 192.168.1.1, eth0
+```
+
 **Longest Prefix Match** → выбирается самый специфичный маршрут.
+
+Пример:
+
+```text
+routing table:
+10.0.0.0/8      → via 192.168.1.1
+10.20.0.0/16    → via 192.168.1.2
+10.20.30.0/24   → via 192.168.1.3
+0.0.0.0/0       → via 192.168.1.254
+
+destination: 10.20.30.40
+```
+
+Подходят маршруты:
+
+```text
+10.0.0.0/8
+10.20.0.0/16
+10.20.30.0/24
+0.0.0.0/0
+```
+
+Выбран будет:
+
+```text
+10.20.30.0/24 → via 192.168.1.3
+```
+
+Потому что `/24` специфичнее, чем `/16`, `/8` и `/0`.
 
 **Default route** → `0.0.0.0/0`.
 
+Пример:
+
+```text
+0.0.0.0/0 → via 192.168.1.1, eth0
+```
+
 **Default gateway** → next hop для default route.
+
+Пример: `192.168.1.1`.
 
 **Gateway не вычисляется из IP/маски** → он приходит из конфигурации, например DHCP.
 
+Пример: для `192.168.1.10/24` gateway не обязан быть `192.168.1.1`; это просто частый convention.
+
 **Next hop** → следующий L3-узел, которому передаётся packet.
+
+Пример: при маршруте `10.0.0.0/8 → via 192.168.1.1` next hop — `192.168.1.1`.
 
 ---
 
@@ -1787,6 +1997,65 @@ SYN-ACK
 ACK
 ```
 
+Алгоритм:
+
+1. TCP connection — full-duplex: есть отдельный byte stream `client → server` и отдельный byte stream `server → client`.
+
+2. У каждого направления свой sequence space:
+
+```text
+client_isn = 1000
+server_isn = 5000
+```
+
+3. Client отправляет первый segment:
+
+```text
+client → server
+SYN
+SEQ = client_isn = 1000
+```
+
+Это задаёт initial sequence number для направления `client → server`.
+
+4. Server отвечает:
+
+```text
+server → client
+SYN + ACK
+SEQ = server_isn = 5000
+ACK = client_isn + 1 = 1001
+```
+
+`SEQ = 5000` задаёт initial sequence number для направления `server → client`.
+
+`ACK = 1001` подтверждает клиентский `SYN`.
+
+5. Client подтверждает серверный `SYN`:
+
+```text
+client → server
+ACK
+SEQ = client_isn + 1 = 1001
+ACK = server_isn + 1 = 5001
+```
+
+6. После handshake:
+
+```text
+client next SEQ = 1001
+server next SEQ = 5001
+```
+
+`SYN` занимает один sequence number, хотя не несёт data byte.
+
+Важно:
+
+```text
+SEQ относится к своему направлению передачи.
+ACK относится к обратному направлению: какой следующий byte ожидаем от peer.
+```
+
 **SEQ** → номер байта в stream.
 
 **ACK** → номер следующего ожидаемого байта.
@@ -1801,15 +2070,122 @@ ACK
 
 **SACK** → Selective Acknowledgement.
 
-**rwnd** → receive window от получателя.
-
-**cwnd** → congestion window от congestion control.
-
 **MSS** → Maximum Segment Size, TCP payload без IP/TCP headers.
 
 ---
 
-## 9. TCP close: FIN, RST, TIME_WAIT
+## 9. TCP windows: `rwnd` и `cwnd`
+
+**TCP window** → ограничение на количество данных, которые можно отправить без получения новых ACK.
+
+В TCP есть два разных ограничения:
+
+**`rwnd` / receive window** → окно получателя; сколько данных peer готов принять в свой receive buffer.
+
+**`cwnd` / congestion window** → окно congestion control; сколько данных sender считает безопасным держать “в полёте” в сети.
+
+Реально отправитель ограничен меньшим из двух:
+
+```text
+send window = min(rwnd, cwnd)
+```
+
+Пример:
+
+```text
+rwnd = 64 KB
+cwnd = 16 KB
+→ sender может держать in-flight только 16 KB
+```
+
+Другой пример:
+
+```text
+rwnd = 8 KB
+cwnd = 64 KB
+→ sender может держать in-flight только 8 KB
+```
+
+`rwnd` защищает получателя:
+
+```text
+receiver buffer почти заполнен
+→ receiver уменьшает advertised window
+→ sender замедляется
+```
+
+`cwnd` защищает сеть:
+
+```text
+loss / timeout / congestion signal
+→ congestion control уменьшает cwnd
+→ sender отправляет меньше in-flight data
+```
+
+**In-flight data** → отправленные bytes, которые ещё не подтверждены ACK.
+
+**Bandwidth-delay product / BDP** → сколько данных нужно держать in-flight, чтобы заполнить канал:
+
+```text
+BDP = bandwidth × RTT
+```
+
+---
+
+## 10. TCP states и `ss`
+
+**TCP state** → состояние конкретного TCP socket/connection в state machine ядра.
+
+`ss` показывает эти состояния:
+
+```bash
+ss -tna
+ss -tna state established
+ss -tna state listen
+ss -tna state time-wait
+```
+
+Основные states:
+
+**LISTEN** → server socket ждёт входящие connections.
+
+**SYN-SENT** → client отправил `SYN`, ждёт `SYN-ACK`.
+
+**SYN-RECV** → server получил `SYN`, отправил `SYN-ACK`, ждёт финальный `ACK`.
+
+**ESTAB / ESTABLISHED** → handshake завершён, данные можно передавать в обе стороны.
+
+**FIN-WAIT-1** → сторона отправила `FIN`, ждёт `ACK` или встречный `FIN`.
+
+**FIN-WAIT-2** → `FIN` подтверждён, сторона ждёт `FIN` от peer.
+
+**CLOSE-WAIT** → peer прислал `FIN`; локальное приложение ещё не закрыло socket.
+
+**LAST-ACK** → локальная сторона отправила `FIN` после `CLOSE-WAIT`, ждёт финальный `ACK`.
+
+**TIME-WAIT** → активно закрывшая сторона ждёт, чтобы старые segments не попали в новую connection.
+
+**CLOSING** → обе стороны почти одновременно отправили `FIN`, ждут подтверждения.
+
+Примеры:
+
+```text
+LISTEN    0  4096  0.0.0.0:80        0.0.0.0:*
+ESTAB     0  0     10.0.0.2:443      10.0.0.5:53044
+TIME-WAIT 0  0     10.0.0.2:443      10.0.0.5:53044
+```
+
+Частые симптомы:
+
+```text
+много SYN-RECV    → backlog/SYN flood/peer не завершает handshake
+много CLOSE-WAIT  → приложение не закрывает socket после FIN от peer
+много TIME-WAIT   → много коротких connections; обычно нормально для active close
+```
+
+---
+
+## 11. TCP close: FIN, RST, TIME_WAIT
 
 **FIN** → нормальное закрытие одного направления.
 
@@ -1821,7 +2197,7 @@ ACK
 
 ---
 
-## 10. UDP
+## 12. UDP
 
 **UDP** → datagram protocol без handshake, гарантии доставки, порядка и retransmission.
 
@@ -1831,7 +2207,7 @@ ACK
 
 ---
 
-## 11. DNS
+## 13. DNS
 
 **DNS** → Domain Name System.
 
@@ -1847,7 +2223,7 @@ DNS сообщает адрес; дальше работают routing, ARP, TCP
 
 ---
 
-## 12. DHCP
+## 14. DHCP
 
 **DHCP** → Dynamic Host Configuration Protocol.
 
@@ -1870,7 +2246,52 @@ UDP src = 68
 UDP dst = 67
 ```
 
-**xid / Transaction ID** → ID конкретного DHCP-обмена.
+Что происходит, когда новый host приходит в сеть:
+
+1. Client ещё не знает свой IP и DHCP server.
+
+2. Client отправляет broadcast `DHCP Discover`:
+
+```text
+Ethernet dst = ff:ff:ff:ff:ff:ff
+IP src = 0.0.0.0
+IP dst = 255.255.255.255
+UDP 68 → 67
+xid = client-generated transaction id
+```
+
+Этот frame получают все хосты в текущем broadcast domain/VLAN, но отвечает только DHCP server.
+
+3. DHCP server отвечает `DHCP Offer`:
+
+```text
+xid = тот же transaction id
+server предлагает IP
+передаёт lease time и options
+например: mask, gateway, DNS
+```
+
+Если пришло несколько `Offer`, client обычно выбирает первый подходящий.
+
+4. Client отправляет `DHCP Request`:
+
+```text
+xid = тот же transaction id
+server identifier = выбранный DHCP server
+requested IP = выбранный address
+просит выдать предложенный IP
+```
+
+Обычно это тоже broadcast, чтобы другие DHCP servers увидели `Server Identifier` и поняли, чей offer выбран.
+
+5. DHCP server отправляет `DHCP ACK`:
+
+```text
+xid = тот же transaction id
+IP выдан
+lease активен
+client применяет address/mask/gateway/DNS
+```
 
 **Lease** → аренда адреса.
 
@@ -1878,7 +2299,7 @@ UDP dst = 67
 
 ---
 
-## 13. DHCP options
+## 15. DHCP options
 
 DHCP может передать:
 
@@ -1902,7 +2323,7 @@ DHCP только сообщает параметры; ОС сама настр�
 
 ---
 
-## 14. VLAN
+## 16. VLAN
 
 **VLAN** → Virtual Local Area Network, логическое разделение L2-инфраструктуры на отдельные broadcast domains.
 
@@ -1924,7 +2345,7 @@ VLAN 20 ↔ 10.10.20.0/24
 
 ---
 
-## 15. DHCP relay
+## 17. DHCP relay
 
 **Проблема** → DHCP Discover broadcast не маршрутизируется между подсетями.
 
@@ -1936,40 +2357,52 @@ VLAN 20 ↔ 10.10.20.0/24
 
 ---
 
-## 16. NAT
+## 18. NAT
 
 **NAT** → Network Address Translation.
 
 Пример исходящего NAT:
 
 ```text
-192.168.1.10:51514
-↓
-203.0.113.5:40001
+client 192.168.1.10:51514 → server 93.184.216.34:443
+
+после NAT:
+
+router public 203.0.113.5:40001 → server 93.184.216.34:443
 ```
 
-Router хранит mapping и делает обратную трансляцию на reply.
+Client ходит на `443`; порт `40001` — внешний source port, который router выбрал для NAT mapping.
+
+Это реальное поле TCP/UDP source port в packet после трансляции, но обычно не listening socket процесса на router.
+
+Router хранит mapping и делает обратную трансляцию на reply:
+
+```text
+server 93.184.216.34:443 → router public 203.0.113.5:40001
+↓
+server 93.184.216.34:443 → client 192.168.1.10:51514
+```
 
 **PAT** → Port Address Translation; много внутренних clients делят один public IP через разные внешние ports.
 
 ---
 
-## 17. SNAT, DNAT, MASQUERADE
+## 19. SNAT, DNAT, MASQUERADE
 
 **SNAT** → Source NAT:
 
 ```text
-192.168.1.10:51514
+client 192.168.1.10:51514 → server 93.184.216.34:443
 →
-203.0.113.5:40001
+router public 203.0.113.5:40001 → server 93.184.216.34:443
 ```
 
 **DNAT** → Destination NAT:
 
 ```text
-203.0.113.5:443
+external client 198.51.100.77:53000 → router public 203.0.113.5:443
 →
-192.168.1.20:8443
+external client 198.51.100.77:53000 → internal server 192.168.1.20:443
 ```
 
 **Port forwarding** → типичный DNAT scenario.
@@ -1978,9 +2411,24 @@ Router хранит mapping и делает обратную трансляци�
 
 ---
 
-## 18. Conntrack / stateful NAT
+## 20. Conntrack / stateful NAT
 
-**conntrack** → отслеживание состояния connections/flows.
+**conntrack** → runtime-таблица уже увиденных connections/flows.
+
+Она нужна, чтобы router/firewall понимал:
+
+```text
+этот packet начинает новый flow
+или
+это reply к уже известному flow
+```
+
+Важно:
+
+```text
+DNAT/SNAT/port forwarding rule → статическое правило трансляции
+conntrack entry                → динамическая запись о конкретном flow
+```
 
 Удобная модель через 5-tuple:
 
@@ -1992,31 +2440,81 @@ dst IP
 dst port
 ```
 
+Для исходящего HTTPS через NAT:
+
+```text
+original flow:
+tcp 192.168.1.10:51514 → 93.184.216.34:443
+
+translated flow:
+tcp 203.0.113.5:40001 → 93.184.216.34:443
+
+reply:
+tcp 93.184.216.34:443 → 203.0.113.5:40001
+↓ reverse NAT
+tcp 93.184.216.34:443 → 192.168.1.10:51514
+```
+
+Conntrack/NAT state хранит связь между original/reply tuple и трансляцией адресов/портов.
+
 **Stateful NAT** → знает, какой reverse packet относится к какому уже известному flow.
 
 **UDP** → FIN/handshake нет, state в основном живёт по timeout.
 
 ---
 
-## 19. Hairpin NAT и CGNAT
+## 21. Hairpin NAT
 
 **Hairpin NAT / NAT loopback** → client из LAN обращается к public IP своего же router и попадает обратно на internal server.
+
+Пример:
+
+```text
+LAN client:      192.168.1.10
+internal server: 192.168.1.20:443
+router public:   203.0.113.5:443
+```
+
+Client из LAN идёт не на private IP сервера, а на public address:
+
+```text
+192.168.1.10 → 203.0.113.5:443
+```
+
+Router применяет DNAT обратно внутрь LAN:
+
+```text
+203.0.113.5:443 → 192.168.1.20:443
+```
+
+Без hairpin NAT такой доступ изнутри к собственному public IP может не работать.
+
+---
+
+## 22. CGNAT
 
 **CGNAT** → Carrier-Grade NAT, дополнительный NAT у ISP.
 
 ```text
-192.168.x.x
+192.168.1.10
 ↓ home NAT
-100.64.0.0/10
+100.64.x.x
 ↓ ISP CGNAT
 public IP
 ```
 
-**Следствие** → local port forwarding может не работать, если настоящий public IP контролирует ISP NAT.
+`100.64.0.0/10` → специальный диапазон для carrier-grade NAT.
+
+Следствие:
+
+```text
+port forwarding на домашнем router может не работать,
+если настоящий public IP находится не на нём, а на NAT у ISP.
+```
 
 ---
 
-## 20. STUN
+## 23. STUN
 
 **STUN** → Session Traversal Utilities for NAT.
 
@@ -2039,7 +2537,18 @@ external mapping = 2.2.2.2:45000
 
 ---
 
-## 21. UDP hole punching
+## 24. UDP hole punching
+
+Проблема:
+
+```text
+Alice за NAT
+Bob за NAT
+```
+
+У обоих нет заранее настроенного port forwarding, поэтому прямой входящий packet снаружи обычно будет отброшен NAT/firewall.
+
+Но обе стороны хотят установить P2P-связь без relay.
 
 Alice и Bob узнают external mappings через STUN и обмениваются ими через signaling.
 
@@ -2060,7 +2569,7 @@ Bob → Alice
 
 ---
 
-## 22. TURN
+## 25. TURN
 
 **TURN** → Traversal Using Relays around NAT.
 
@@ -2080,7 +2589,7 @@ Bob
 
 ---
 
-## 23. ICE
+## 26. ICE
 
 **ICE** → Interactive Connectivity Establishment.
 
@@ -2102,7 +2611,7 @@ ICE строит **candidate pairs**, даёт им priorities, делает con
 
 ---
 
-## 24. Firewall
+## 27. Firewall
 
 **Firewall** → решает, пропустить packet или нет.
 
@@ -2124,7 +2633,7 @@ incoming NEW → deny unless explicitly allowed
 
 ---
 
-## 25. INPUT, OUTPUT, FORWARD
+## 28. INPUT, OUTPUT, FORWARD
 
 На Linux:
 
@@ -2145,9 +2654,9 @@ nginx → backend  = OUTPUT для nginx host
 
 ---
 
-## 26. Порядок DNAT, routing, firewall и SNAT
+## 29. Порядок DNAT, routing, firewall и SNAT
 
-Упрощённо:
+Входящий или транзитный packet:
 
 ```text
 packet arrives
@@ -2169,6 +2678,24 @@ SNAT / MASQUERADE
 network
 ```
 
+Packet, созданный локальным процессом:
+
+```text
+local process sends
+↓
+OUTPUT
+↓
+routing decision
+↓
+firewall filtering
+↓
+POSTROUTING
+↓
+SNAT / MASQUERADE
+↓
+network
+```
+
 **DNAT** обычно рано, до routing decision.
 
 **SNAT** обычно поздно, перед отправкой наружу.
@@ -2177,7 +2704,7 @@ network
 
 ---
 
-## 27. Firewall policy и порядок rules
+## 30. Firewall policy и порядок rules
 
 Rules идут сверху вниз.
 
@@ -2194,9 +2721,38 @@ Rules идут сверху вниз.
 
 Для server security обычно удобнее default deny.
 
+Что видит вызывающая сторона:
+
+**ACCEPT** → packet пропускается дальше.
+
+Для клиента это выглядит как обычная попытка соединения:
+
+```text
+service слушает и отвечает → connection работает
+service не слушает        → host обычно вернёт TCP RST / ICMP error
+```
+
+**REJECT** → packet запрещён, но firewall явно отвечает ошибкой.
+
+Для клиента это быстрый отказ:
+
+```text
+TCP → обычно reset / connection refused
+UDP → обычно ICMP port/admin unreachable
+```
+
+**DROP** → packet молча выбрасывается, ответа нет.
+
+Для клиента это выглядит как timeout:
+
+```text
+TCP SYN → нет SYN-ACK/RST → retries → timeout
+UDP     → нет ответа      → timeout на уровне приложения
+```
+
 ---
 
-## 28. Bind address
+## 31. Bind address
 
 **`127.0.0.1:3000`** → только loopback/local host.
 
@@ -2218,7 +2774,7 @@ Bind на private IP полезен как дополнительное огра
 
 ---
 
-## 29. Reverse proxy и forward proxy
+## 32. Reverse proxy и forward proxy
 
 **Reverse proxy** → proxy со стороны server/backends:
 
@@ -2251,7 +2807,7 @@ Internet
 
 ---
 
-## 30. Gateway vs proxy
+## 33. Gateway vs proxy
 
 **Gateway** → более широкая точка входа/выхода между системами.
 
@@ -2270,7 +2826,7 @@ Gateway может включать:
 
 ---
 
-## 31. Load balancer
+## 34. Load balancer
 
 **Load balancer / LB** → распределяет requests/connections между несколькими backends.
 
@@ -2290,7 +2846,7 @@ Gateway может включать:
 
 ---
 
-## 32. L4 vs L7 load balancing
+## 35. L4 vs L7 load balancing
 
 **L4 LB** → TCP/UDP level; HTTP понимать не обязан.
 
@@ -2309,7 +2865,7 @@ cookie
 
 ---
 
-## 33. TLS: что даёт
+## 36. TLS: что даёт
 
 **TLS** → Transport Layer Security.
 
@@ -2323,7 +2879,7 @@ cookie
 
 ---
 
-## 34. Certificate, PKI и trust
+## 37. Certificate, PKI и trust
 
 **X.509 certificate** → identity + public key + validity + extensions + CA signature.
 
@@ -2353,7 +2909,7 @@ Root обычно не присылается server'ом; client уже дов�
 
 ---
 
-## 35. CSR и private key
+## 38. CSR и private key
 
 **Private key генерируется у владельца и CA не отправляется.**
 
@@ -2363,7 +2919,7 @@ CA возвращает certificate, а не private key.
 
 ---
 
-## 36. Certificate formats
+## 39. Certificate formats
 
 **DER** → binary encoding.
 
@@ -2377,7 +2933,7 @@ File extension не всегда гарантирует формат.
 
 ---
 
-## 37. TLS 1.3 handshake
+## 40. TLS 1.3 handshake
 
 После TCP:
 
@@ -2409,7 +2965,7 @@ encrypted HTTP
 
 ---
 
-## 38. ClientHello
+## 41. ClientHello
 
 Содержит, упрощённо:
 
@@ -2427,7 +2983,7 @@ encrypted HTTP
 
 ---
 
-## 39. ServerHello и cipher suite
+## 42. ServerHello и cipher suite
 
 Server выбирает TLS parameters.
 
@@ -2446,34 +3002,40 @@ TLS_AES_128_GCM_SHA256
 
 ---
 
-## 40. Diffie–Hellman / X25519
+## 43. Diffie–Hellman / X25519
 
-**DH** → key agreement, не encryption.
+**Diffie–Hellman** → способ договориться об общем секрете по открытому каналу; сам по себе не шифрует данные.
+
+**X25519** → современный вариант Diffie–Hellman на elliptic curve, часто используется в TLS 1.3.
 
 ```text
 Client:
-DH(client_private, server_public)
+свой private DH key + открытое DH-значение server
 → shared_secret
 
 Server:
-DH(server_private, client_public)
-→ same shared_secret
+свой private DH key + открытое DH-значение client
+→ тот же shared_secret
 ```
 
-**Passive sniffer** видит publics, но practically не восстанавливает original secret.
+Открытые DH-значения передаются по сети и видны наблюдателю.
 
-**Active MITM** может подменить public values и создать:
+Private DH keys по сети не передаются.
+
+**Passive MITM / пассивный наблюдатель** → видит оба открытых DH-значения, но не может практически восстановить общий секрет.
+
+**Active MITM / активный посредник** → может подменить открытые DH-значения и создать две разные защищённые сессии:
 
 ```text
 Client ↔ Attacker
 Attacker ↔ Server
 ```
 
-Поэтому голый DH не аутентифицирует peer.
+Поэтому Diffie–Hellman без проверки сертификата не доказывает, что client говорит именно с нужным server.
 
 ---
 
-## 41. CertificateVerify
+## 44. CertificateVerify
 
 **Certificate** говорит:
 
@@ -2481,20 +3043,30 @@ Attacker ↔ Server
 
 **CertificateVerify** говорит:
 
-> «Текущий handshake peer реально владеет matching private key».
+> «Server реально владеет private key, который соответствует public key в leaf certificate».
 
 Упрощённо:
 
 ```text
 signature =
-Sign(cert_private_key, handshake_transcript_hash)
+Sign(server_private_key, transcript_hash)
 ```
 
-Client проверяет signature через public key leaf certificate.
+`server_private_key` → закрытый ключ сервера, соответствующий public key в leaf certificate.
+
+`transcript_hash` → hash handshake-сообщений, которые стороны уже увидели к моменту `CertificateVerify`.
+
+Client проверяет signature через public key из leaf certificate:
+
+```text
+Verify(leaf_certificate_public_key, signature, transcript_hash)
+```
+
+В mTLS client тоже отправляет свой `CertificateVerify`, чтобы доказать владение private key своего client certificate.
 
 ---
 
-## 42. Finished
+## 45. Finished
 
 **Finished** → финальная cryptographic check, что стороны:
 
@@ -2504,11 +3076,28 @@ Client проверяет signature через public key leaf certificate.
 Server Finished → client verifies.  
 Client Finished → server verifies.
 
+Откуда берутся ключи:
+
+```text
+DH shared_secret
++ handshake transcript
+↓
+TLS 1.3 key schedule
+↓
+handshake traffic keys
+↓
+application traffic keys
+```
+
+**Handshake traffic keys** → защищают зашифрованную часть handshake после `ServerHello`.
+
+**Application traffic keys** → защищают application data после завершения handshake, например HTTP.
+
 После этого TLS handshake завершён.
 
 ---
 
-## 43. TLS record protection
+## 46. TLS record protection
 
 После `ServerHello` дальнейшие server handshake messages TLS 1.3 уже защищены handshake traffic keys.
 
@@ -2524,7 +3113,7 @@ TLS records защищаются ChaCha20-Poly1305.
 
 ---
 
-## 44. TLS termination, re-encryption, passthrough
+## 47. TLS termination, re-encryption, passthrough
 
 **Termination**:
 
@@ -2553,7 +3142,7 @@ Proxy не расшифровывает HTTP.
 
 ---
 
-## 45. mTLS
+## 48. mTLS
 
 **mTLS** → mutual TLS.
 
@@ -2585,7 +3174,7 @@ mTLS — обычный TLS с дополнительной client certificate a
 
 ---
 
-## 46. mTLS и ClientHello
+## 49. mTLS и ClientHello
 
 Специального:
 
@@ -2599,7 +3188,7 @@ mTLS = true
 
 ---
 
-## 47. HTTP Host
+## 50. HTTP Host
 
 ```http
 Host: api.example.com
@@ -2619,7 +3208,7 @@ Host: admin.example.com
 
 ---
 
-## 48. SNI vs HTTP Host
+## 51. SNI vs HTTP Host
 
 **SNI** → TLS layer, ClientHello, нужен до HTTP для выбора TLS certificate.
 
@@ -2643,7 +3232,7 @@ backend routing
 
 ---
 
-## 49. X-Forwarded-For
+## 52. X-Forwarded-For
 
 Через reverse proxy backend видит TCP peer = proxy, а не original client.
 
@@ -2669,7 +3258,7 @@ Trusted forwarded headers должны приниматься только от 
 
 ---
 
-## 50. X-Forwarded-Proto / Host / Port / Forwarded
+## 53. X-Forwarded-Proto / Host / Port / Forwarded
 
 **`X-Forwarded-Proto`** → исходная схема:
 
@@ -2691,7 +3280,7 @@ Forwarded: for=1.2.3.4;proto=https;host=api.example.com
 
 ---
 
-## 51. HTTP keep-alive / persistent connection
+## 54. HTTP keep-alive / persistent connection
 
 **Один HTTP request ≠ один TCP connection.**
 
@@ -2711,7 +3300,7 @@ HTTP/1.1 persistent connection — нормальный режим.
 
 ---
 
-## 52. HTTP/2 multiplexing
+## 55. HTTP/2 multiplexing
 
 **Multiplexing** → несколько независимых HTTP streams внутри одного TCP connection.
 
@@ -2724,7 +3313,7 @@ TCP connection
 
 ---
 
-## 53. Backend connection pools
+## 56. Backend connection pools
 
 Reverse proxy может держать pool connections к backends:
 
@@ -2739,7 +3328,7 @@ Request берёт свободное connection; после response оно м�
 
 ---
 
-## 54. HTTP keep-alive vs TCP keepalive
+## 57. HTTP keep-alive vs TCP keepalive
 
 **HTTP keep-alive** → reuse connection для новых HTTP requests.
 
@@ -2749,7 +3338,7 @@ Request берёт свободное connection; после response оно м�
 
 ---
 
-## 55. Reverse proxy timeouts
+## 58. Reverse proxy timeouts
 
 **Connect timeout** → сколько ждать установления connection с backend.
 
@@ -2763,7 +3352,7 @@ Request берёт свободное connection; после response оно м�
 
 ---
 
-## 56. 502 vs 504
+## 59. 502 vs 504
 
 Грубая полезная модель:
 
@@ -2777,7 +3366,7 @@ Request берёт свободное connection; после response оно м�
 
 ---
 
-## 57. Таймауты слоями
+## 60. Таймауты слоями
 
 ```text
 Client
@@ -2799,7 +3388,7 @@ App
 
 ---
 
-## 58. End-to-end картина
+## 61. Полный путь запроса
 
 ```text
 DNS
@@ -2856,7 +3445,7 @@ ICE
 
 ---
 
-## 59. Диагностический маршрут
+## 62. Диагностический маршрут
 
 Если «не работает сеть», быстро пройти:
 
@@ -2875,64 +3464,4 @@ ICE
 12. Proxy подключается к backend?
 13. Backend отвечает до timeout?
 14. Forwarded headers настроены корректно?
-```
-
----
-
-## 60. Что не склеивать
-
-**VLAN ≠ subnet**
-
-**NAT ≠ firewall**
-
-**Reverse proxy ≠ router**
-
-**Reverse proxy ≠ load balancer**
-
-**Gateway ≠ reverse proxy**
-
-**TLS ≠ TCP encryption**
-
-**DH ≠ encryption**
-
-**Certificate ≠ доказательство текущего владения private key**
-
-**STUN ≠ TURN**
-
-**STUN mapping ≠ гарантированно открытый public socket**
-
-**HTTP keep-alive ≠ TCP keepalive**
-
-**SNI ≠ Host**
-
-**INPUT/OUTPUT/FORWARD ≠ forward/reverse proxy terminology**
-
----
-
-## 61. Минимальный DevOps mental model
-
-```text
-Bind
-→ где service слушает
-
-Firewall
-→ кому разрешён traffic
-
-Routing
-→ куда отправить packet
-
-NAT
-→ какие IP/ports переписать
-
-Proxy
-→ кто принимает connection вместо backend
-
-Load Balancer
-→ какой backend выбрать
-
-TLS
-→ как защитить bytes и аутентифицировать peer
-
-HTTP
-→ что именно просит application client
 ```
