@@ -42,7 +42,7 @@ Linux kernel
 - `containerd` — lifecycle manager для container tasks/runtime.
 - `shim` — host-side процесс-посредник рядом с конкретным running task.
 - `runc` — low-level OCI runtime: создаёт runtime environment и запускает process.
-- Linux kernel — делает всю настоящую работу на уровне процессов, namespaces, cgroups, mounts, networking, signals.
+- `Linux kernel` — делает всю настоящую работу на уровне процессов, namespaces, cgroups, mounts, networking, signals.
 
 
 
@@ -57,8 +57,6 @@ filesystem data
 +
 image metadata/config
 ```
-
-Image не является running process.
 
 Важные свойства:
 
@@ -251,7 +249,7 @@ read lower file
 
 Lower layer immutable, поэтому удалить его физически нельзя.
 
-OverlayFS использует whiteout:
+OverlayFS использует `whiteout`:
 
 ```text
 lower contains file
@@ -548,6 +546,42 @@ Cgroup отвечает:
 relative weight
 ```
 
+Docker CLI пример:
+
+```bash
+docker run --cpu-shares 512 image
+docker run --cpu-shares 1024 image
+docker run --cpu-shares 2048 image
+```
+
+Смысл:
+
+```text
+512  → относительный вес ниже default
+1024 → default CPU shares
+2048 → относительный вес выше default
+```
+
+Это не жёсткий лимит CPU. Weight влияет на распределение CPU **при конкуренции** за CPU time.
+
+Cgroup v2-level:
+
+```text
+cpu.weight
+```
+
+Пример:
+
+```bash
+echo 100 > /sys/fs/cgroup/<group>/cpu.weight
+```
+
+Диапазон `cpu.weight` в cgroup v2:
+
+```text
+1..10000
+```
+
 и:
 
 ```text
@@ -597,6 +631,66 @@ IOPS
 weight
 ```
 
+Docker CLI BPS examples:
+
+```bash
+docker run --device-read-bps /dev/sda:10mb image
+docker run --device-write-bps /dev/sda:20mb image
+```
+
+Docker CLI IOPS examples:
+
+```bash
+docker run --device-read-iops /dev/sda:1000 image
+docker run --device-write-iops /dev/sda:500 image
+```
+
+Docker CLI relative weight:
+
+```bash
+docker run --blkio-weight 500 image
+```
+
+Смысл:
+
+```text
+BPS
+→ bytes per second limit
+
+IOPS
+→ operations per second limit
+
+weight
+→ относительная доля block I/O при конкуренции
+```
+
+Cgroup v2-level:
+
+```text
+io.max
+io.weight
+```
+
+Пример `io.max`:
+
+```text
+8:0 rbps=10485760 wbps=20971520 riops=1000 wiops=500
+```
+
+Где `8:0` — major:minor block device.
+
+Пример `io.weight`:
+
+```text
+default 100
+```
+
+Диапазон `io.weight` в cgroup v2:
+
+```text
+1..10000
+```
+
 Ограничивается underlying block device I/O, не «файл по имени».
 
 
@@ -634,16 +728,6 @@ host free memory > 0
 but
 container cgroup reached memory.max
 ```
-
-### Host OOM
-
-Глобальное истощение памяти host.
-
-### OOM killer
-
-Не отдельный daemon.
-
-Kernel выбирает victim.
 
 ### Exit code 137
 
@@ -1119,9 +1203,9 @@ write(...)
 
 ### Rotation
 
-Для stdout/stderr — responsibility logging driver/config.
+Для stdout/stderr — ответственность logging driver/config.
 
-Для application-owned `/var/log/*.log` — отдельная responsibility.
+Для application-owned `/var/log/*.log` — отдельная ответственность.
 
 Compose per-service:
 
@@ -1136,7 +1220,6 @@ services:
 ```
 
 Global Docker defaults — daemon config.
-
 
 
 ## 18. Signals и lifecycle

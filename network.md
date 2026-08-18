@@ -1,6 +1,6 @@
 # Network
 
-## 1. OSI, инкапсуляция и уровни
+## 1. OSI, инкапсуляция, декапсуляция и уровни
 
 **L1 / Physical** → сигнал и физическая среда: электричество/оптика/радио, bit rate/baud, шум, затухание.
 
@@ -24,6 +24,20 @@ TCP
 IP
 ↓
 Ethernet
+```
+
+**Декапсуляция** → обратный процесс на принимающей стороне: каждый нижний слой проверяет свой header/trailer, снимает его и передаёт payload выше.
+
+```text
+Ethernet
+↓
+IP
+↓
+TCP
+↓
+TLS
+↓
+HTTP
 ```
 
 **Frame** → L2.  
@@ -62,7 +76,7 @@ Ethernet
 
 **FCS / CRC** → обнаружение ошибок кадра; не криптографическая защита.
 
-**MTU** → максимальный IP-пакет, передаваемый через L2 без фрагментации; типично Ethernet MTU = 1500.
+**MTU (Maximum Transmission Unit)** → максимальный IP-пакет, передаваемый через L2 без фрагментации; типично Ethernet MTU = 1500.
 
 
 
@@ -232,7 +246,7 @@ Ethernet dst = MAC gateway
 
 **PMTUD** → Path MTU Discovery, поиск максимального packet size на пути без fragmentation.
 
-**ICMP** → сообщения об ошибках/служебная диагностика, в том числе участвует в PMTUD.
+**ICMP (Internet Control Message Protocol)** → сообщения об ошибках/служебная диагностика, в том числе участвует в PMTUD.
 
 
 
@@ -1424,7 +1438,7 @@ Proxy не расшифровывает HTTP.
 
 ## 48. mTLS
 
-**mTLS** → mutual TLS.
+**mTLS** → mutual (взаимный) TLS.
 
 Обычный TLS:
 
@@ -1592,8 +1606,76 @@ TCP connection
 ```
 
 
+## 56. HTTP/3 и QUIC
 
-## 56. Backend connection pools
+**HTTP/3** → HTTP semantics поверх **QUIC**, а не поверх TCP.
+
+```text
+HTTP/1.1
+→ TCP
+
+HTTP/2
+→ TCP
+
+HTTP/3
+→ QUIC
+→ UDP
+→ IP
+```
+
+**QUIC** → transport protocol поверх UDP, который реализует внутри себя:
+
+- connection establishment;
+- multiplexed streams;
+- flow control;
+- congestion control;
+- loss recovery;
+- TLS 1.3 encryption.
+
+Почему UDP:
+
+```text
+kernel/network devices уже умеют пропускать UDP
+↓
+QUIC можно развивать в userspace быстрее, чем менять TCP в kernel/network stack
+```
+
+Ключевое отличие от HTTP/2:
+
+```text
+HTTP/2 streams живут внутри одного TCP connection
+→ потеря TCP packet может блокировать delivery данных по всем streams
+
+HTTP/3 streams живут внутри QUIC connection
+→ loss по одному stream не обязан блокировать остальные streams на transport level
+```
+
+Это уменьшает **head-of-line blocking** на transport layer.
+
+QUIC connection identity не равна только 4-tuple:
+
+```text
+src IP, src port, dst IP, dst port
+```
+
+QUIC использует connection IDs, поэтому connection может переживать смену network path, например переход клиента с Wi‑Fi на mobile network.
+
+Практическая граница:
+
+```text
+HTTP/3
+→ application protocol version
+
+QUIC
+→ encrypted transport over UDP
+
+UDP
+→ только базовая datagram delivery; надёжность и streams делает QUIC
+```
+
+
+
+## 57. Backend connection pools
 
 Reverse proxy может держать pool connections к backends:
 
@@ -1608,7 +1690,7 @@ Request берёт свободное connection; после response оно м�
 
 
 
-## 57. HTTP keep-alive vs TCP keepalive
+## 58. HTTP keep-alive vs TCP keepalive
 
 **HTTP keep-alive** → reuse connection для новых HTTP requests.
 
@@ -1618,7 +1700,7 @@ Request берёт свободное connection; после response оно м�
 
 
 
-## 58. Reverse proxy timeouts
+## 59. Reverse proxy timeouts
 
 **Connect timeout** → сколько ждать установления connection с backend.
 
@@ -1632,7 +1714,7 @@ Request берёт свободное connection; после response оно м�
 
 
 
-## 59. 502 vs 504
+## 60. 502 vs 504
 
 Грубая полезная модель:
 
@@ -1646,7 +1728,7 @@ Request берёт свободное connection; после response оно м�
 
 
 
-## 60. Таймауты слоями
+## 61. Таймауты слоями
 
 ```text
 Client
@@ -1668,7 +1750,7 @@ App
 
 
 
-## 61. Полный путь запроса
+## 62. Полный путь запроса
 
 ```text
 DNS
@@ -1725,7 +1807,7 @@ ICE
 
 
 
-## 62. Диагностический маршрут
+## 63. Диагностический маршрут
 
 Если «не работает сеть», быстро пройти:
 

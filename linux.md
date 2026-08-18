@@ -224,7 +224,7 @@ execve() → новая программа в старом PID
 
 ### Linux signal handling: пример `SIGTERM`
 
-Сигнал в Linux лучше думать не как «мгновенный прыжок в handler», а как событие,
+Сигнал в Linux лучше представлять не как «мгновенный прыжок в handler», а как событие,
 которое сначала становится pending, а потом доставляется конкретному `task_struct`
 перед возвратом этого task в userspace.
 
@@ -640,6 +640,92 @@ write()
 **Swap-in** → page fault возвращает страницу в RAM.
 
 **`swappiness`** → насколько охотно ядро выгружает приватную память процессов в swap вместо того, чтобы освобождать файловый кеш; это не процент заполнения RAM.
+
+Где смотреть текущее значение:
+
+```bash
+cat /proc/sys/vm/swappiness
+sysctl vm.swappiness
+```
+
+Где хранится runtime-настройка:
+
+```text
+/proc/sys/vm/swappiness
+```
+
+Изменить до reboot:
+
+```bash
+sudo sysctl -w vm.swappiness=10
+```
+
+Задать persistently:
+
+```text
+/etc/sysctl.conf
+/etc/sysctl.d/*.conf
+```
+
+Например:
+
+```text
+vm.swappiness = 10
+```
+
+Диапазон:
+
+```text
+0..200
+```
+
+В старых материалах часто встречается модель `0..100`, поэтому это легко перепутать. В актуальной kernel documentation для `vm.swappiness` верхняя граница — `200`; значения выше `100` имеют смысл, когда swap I/O дешевле/быстрее, чем filesystem I/O, например zram/zswap или быстрый swap backend.
+
+Типичный default во многих дистрибутивах:
+
+```text
+60
+```
+
+Смысл значения:
+
+```text
+меньше swappiness
+→ ядро сильнее старается сохранить anonymous/private memory в RAM
+→ чаще освобождает file-backed page cache
+
+больше swappiness
+→ ядро охотнее вытесняет anonymous/private memory в swap
+→ может дольше держать file-backed cache в RAM
+```
+
+`swappiness = 0`:
+
+```text
+не отключает swap полностью
+```
+
+Это минимальная агрессивность swap-out. Ядро будет максимально избегать вытеснения anonymous/private pages в swap, пока это возможно, и предпочитать reclaim файлового кеша. Но при серьёзном memory pressure swap всё равно может использоваться.
+
+Максимальное значение:
+
+```text
+swappiness = 200
+```
+
+Это максимальная агрессивность swap-out: ядро сильно склоняется к вытеснению anonymous/private pages в swap вместо освобождения file-backed cache. Такое может иметь смысл, если swap backend относительно быстрый или file-backed I/O дороже, но на обычном медленном disk swap может привести к заметным latency и thrashing.
+
+Практическая граница:
+
+```text
+swappiness
+→ меняет баланс reclaim между anonymous/private memory и file-backed cache
+
+swappiness
+→ не задаёт лимит RAM
+→ не задаёт процент, после которого включается swap
+→ не гарантирует отсутствие swap при 0
+```
 
 Плохо не само `SwapUsed`, а:
 
@@ -1578,13 +1664,13 @@ x traverse
 
 ## 49. setuid, setgid, sticky
 
-**setuid executable** → effective UID становится UID владельца файла при `execve()`.
+**setuid executable** → effective UID становится UID владельца файла при `execve()`; в `ls -l` выглядит как `s` на месте owner execute: `rws`. Если owner execute нет — `S`: `rwS`.
 
-**setgid executable** → effective GID становится GID файла.
+**setgid executable** → effective GID становится GID файла; в `ls -l` выглядит как `s` на месте group execute: `r-s`. Если group execute нет — `S`: `r-S`.
 
-**setgid directory** → новые объекты наследуют группу каталога.
+**setgid directory** → новые объекты наследуют группу каталога; в `ls -l` выглядит как `s` на месте group execute у каталога: `rws`. Если group execute нет — `S`: `rwS`.
 
-**sticky directory** → в общей writable-директории нельзя удалять чужие файлы.
+**sticky directory** → в общей writable-директории нельзя удалять чужие файлы; в `ls -l` выглядит как `t` на месте others execute: `rwt`. Если others execute нет — `T`: `rwT`.
 
 ```bash
 chmod 4755 file
@@ -1717,4 +1803,3 @@ ps -eo pid,stat,wchan:32,comm
 cat /proc/<PID>/stack
 journalctl -k
 ```
-
