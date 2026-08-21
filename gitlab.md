@@ -202,7 +202,7 @@ script выполняется
 
 **Executor** определяет, *как Runner создаёт среду выполнения job*.
 
-Основные модели, которые обсуждали:
+Основные модели:
 
 #### Shell executor
 
@@ -283,7 +283,7 @@ Runner protected?
 
 ### CI/CD variables
 
-Variable — значение, которое GitLab передаёт job и которое обычно появляется внутри execution environment как environment variable.
+Variable — значение, которое GitLab передаёт job. Оно появляется внутри execution environment как environment variable.
 
 ```yaml
 variables:
@@ -298,7 +298,7 @@ echo "$APP_NAME"
 
 ### Где variables могут задаваться
 
-Мы рассматривали:
+Виды variables:
 
 ```text
 predefined GitLab variables
@@ -367,8 +367,6 @@ protected main/tag
 → может получить production secret
 ```
 
-
-
 ### Masked variable
 
 **Masked** относится к отображению значения в job log.
@@ -385,19 +383,15 @@ Masked
 
 Нельзя путать security boundary и log redaction.
 
-
-
 ### Secrets
 
 CI variable может хранить секрет, но секреты архитектурно лучше получать из специализированного secret storage, когда инфраструктура этого требует.
 
-Мы обсуждали Vault: job может аутентифицироваться и получить secret/file непосредственно во время выполнения, вместо хранения всего секрета в YAML.
+Можно использовать Vault: job может аутентифицироваться и получить secret/file непосредственно во время выполнения, вместо хранения всего секрета в YAML.
 
 Главное правило:
 
 **секрет не должен находиться в repository, template или Docker image.**
-
-
 
 ## 5. Artifacts и Cache
 
@@ -434,8 +428,6 @@ GitLab хранит artifact
 
 Artifact имеет lifecycle / expiration.
 
-
-
 ### Cache
 
 **Cache** — механизм ускорения повторных jobs за счёт сохранения повторно используемых файлов.
@@ -463,8 +455,6 @@ CACHE
 
 Если следующая job **обязана** получить файл предыдущей — это artifact, а не cache.
 
-
-
 ### Cache key
 
 Cache идентифицируется key.
@@ -488,8 +478,6 @@ key
 → почти нет reuse
 ```
 
-
-
 ## 6. Управление выполнением jobs
 
 ### `rules`
@@ -506,8 +494,6 @@ rules:
 Важно:
 
 **`rules` вычисляются при построении pipeline, а не когда job уже начала выполняться.**
-
-
 
 ### `when`
 
@@ -532,8 +518,6 @@ deploy_prod:
 
 требует явного запуска пользователем.
 
-
-
 ### Branch / tag / Merge Request pipelines
 
 Нельзя сваливать их в одну сущность.
@@ -555,15 +539,13 @@ MR pipeline
 CI_PIPELINE_SOURCE == "merge_request_event"
 ```
 
-
-
 ### `workflow:rules`
 
 Очень важное различие:
 
 ```text
 workflow:rules
-→ должен ли существовать PIPELINE вообще
+→ должен ли существовать pipeline вообще
 
 job rules
 → должна ли существовать конкретная JOB внутри уже создаваемого pipeline
@@ -579,8 +561,6 @@ workflow:
 ```
 
 Это позволяет явно определить допустимые типы pipeline и избежать нежелательных duplicate pipelines.
-
-
 
 ### `needs`
 
@@ -598,12 +578,10 @@ Stage B
 
 ```text
 build-a ─────→ test-a
-build-b ─────────────→ test-b
+build-b ──────────────────→ test-b
 ```
 
 Это DAG-модель pipeline.
-
-
 
 ### `dependencies`
 
@@ -620,8 +598,6 @@ dependencies
 ```
 
 Современный `needs` также умеет связываться с artifacts, поэтому эти механики нельзя механически дублировать без понимания.
-
-
 
 ## 7. Docker и Registry в GitLab CI
 
@@ -645,8 +621,6 @@ application image
 → продукт docker build
 ```
 
-
-
 ### `services`
 
 `services` — дополнительные контейнеры, которые Runner запускает рядом с job container.
@@ -666,8 +640,6 @@ services:
 ```
 
 Job и service получают сетевую связность, чтобы job могла обращаться к сервису.
-
-
 
 ### GitLab Container Registry
 
@@ -695,8 +667,6 @@ CI_REGISTRY_IMAGE
 CI_REGISTRY_USER
 CI_REGISTRY_PASSWORD
 ```
-
-
 
 ### Docker-in-Docker и Docker socket
 
@@ -726,8 +696,6 @@ Docker CLI внутри job фактически управляет **хосто
 
 User namespace remapping/rootless Docker могут менять security properties, но socket всё равно остаётся крайне чувствительным интерфейсом.
 
-
-
 #### DinD
 
 Docker-in-Docker:
@@ -755,8 +723,6 @@ Namespaces и privileges — разные механизмы.
 
 Однако privileged container получает очень широкие capabilities/device access и резко ослабленные ограничения, поэтому считать его безопасной песочницей нельзя.
 
-
-
 #### Runner в контейнере не создаёт автоматически дополнительную security boundary
 
 Если GitLab Runner сам запущен в Docker, но для создания job/service containers использует:
@@ -782,8 +748,6 @@ host dockerd
 
 Это sibling containers.
 
-
-
 #### Сильная boundary — отдельная VM/kernel
 
 Для untrusted/privileged CI workloads мы пришли к идее:
@@ -800,21 +764,17 @@ Docker workloads
 
 Тогда даже privileged workload находится внутри отдельного guest kernel.
 
-Обсуждали KVM/microVM/Firecracker. Важна не конкретная марка виртуалки, а принцип:
+Можно использовать KVM/microVM/Firecracker. Важна не конкретная марка виртуалки, а принцип:
 
 **для сильной изоляции нужен отдельный kernel boundary, а не ещё один Docker namespace.**
 
 Firecracker — KVM-based microVM technology; в Proxmox чаще практичнее сначала использовать обычные VM, а microVM вводить, если действительно нужна плотность/скорость старта.
-
-
 
 #### Rootless Docker
 
 Rootless Docker запускает daemon и containers без root privileges host'а, используя user namespaces и другие Linux-механизмы.
 
 Это уменьшает последствия компрометации daemon/container, но имеет ограничения и не превращает любую CI-схему автоматически в безопасную.
-
-
 
 ### BuildKit и build cache
 
@@ -831,8 +791,6 @@ BuildKit — современный backend Docker build.
 - поддерживает cache exporters/importers;
 - умеет параллелить независимые операции;
 - используется Buildx.
-
-
 
 #### Локальный BuildKit cache
 
@@ -867,8 +825,6 @@ Runner D → cache D
 
 Это вполне разумная схема.
 
-
-
 #### Почему cache полезен даже при частых commits
 
 Хорошо построенный Dockerfile:
@@ -882,8 +838,6 @@ RUN go build ./...
 ```
 
 Изменение исходников инвалидирует поздние steps, но dependency layer может жить долго, пока не меняются `go.mod/go.sum`.
-
-
 
 #### Remote BuildKit cache
 
@@ -925,8 +879,6 @@ docker build -t app .
 
 самая простая модель — persistent local caches на Runner'ах.
 
-
-
 #### BuildKit GC
 
 Cache нельзя позволять расти бесконечно.
@@ -962,8 +914,6 @@ GC ограничивает диск
 cron → rm -rf /var/lib/docker
 ```
 
-
-
 ### Docker Hub mirror
 
 Это **отдельная проблема от build cache**.
@@ -976,8 +926,6 @@ cron → rm -rf /var/lib/docker
 ```
 
 Это НЕ один cache.
-
-
 
 #### Registry mirror / pull-through cache
 
@@ -1019,8 +967,6 @@ local mirror
 
 Это работает не только для Buildx, а для обычных pull'ов через настроенный daemon.
 
-
-
 #### Отдельный BuildKit daemon
 
 Если registry pull выполняет отдельный `buildkitd`, mirror настраивается уже в его config:
@@ -1033,8 +979,6 @@ local mirror
 Всегда спрашиваем:
 
 **кто именно выполняет pull? `dockerd` или отдельный `buildkitd`?**
-
-
 
 #### GitLab Dependency Proxy
 
@@ -1064,8 +1008,6 @@ final application images
 
 Remote BuildKit registry cache добавлять только если реальные метрики покажут, что cross-runner misses стоят дорого.
 
-
-
 ## 8. Environments и Deployments
 
 ### Environment
@@ -1082,8 +1024,6 @@ review/123
 ```
 
 Environment — долгоживущая сущность GitLab, которая может иметь историю deployments.
-
-
 
 ### Deployment
 
@@ -1109,8 +1049,6 @@ Deployment
 → событие изменения этого environment
 ```
 
-
-
 ### Job создаёт deployment через `environment`
 
 ```yaml
@@ -1122,8 +1060,6 @@ deploy:
 ```
 
 Когда job успешно выполняет deployment, GitLab регистрирует соответствующий deployment в environment.
-
-
 
 ### Dynamic environments и Review Apps
 
@@ -1144,8 +1080,6 @@ review/feature-b
 review/feature-c
 ```
 
-
-
 #### Review App
 
 **Review App** — временно развёрнутая версия приложения для branch/Merge Request, построенная на dynamic environment.
@@ -1165,8 +1099,6 @@ dynamic environment
    ↓
 URL для проверки
 ```
-
-
 
 #### `on_stop`
 
@@ -1200,8 +1132,6 @@ cleanup resources
 Environment STOPPED
 ```
 
-
-
 #### MR lifecycle
 
 Современный GitLab умеет связать Review Environment с Merge Request lifecycle.
@@ -1227,8 +1157,6 @@ MR merged / closed
 
 Это именно та механика, которой очень не хватало в старых GitLab CE-era схемах, из-за чего приходилось poll'ить GitLab API и самостоятельно искать умершие branch/MR environments.
 
-
-
 #### `auto_stop_in`
 
 Для временных environments полезен TTL:
@@ -1239,8 +1167,6 @@ environment:
 ```
 
 Это дополнительная страховка от забытых environments.
-
-
 
 #### Reconciliation / garbage collector
 
@@ -1260,8 +1186,6 @@ periodic reconciler
 
 Старый отдельный cleanup-controller, который через GitLab API находил закрытые MR и удалял containers/DB/buckets/directories, сегодня логичнее использовать именно как **reconciliation safety net**, а не основной lifecycle mechanism.
 
-
-
 ## 9. Организация `.gitlab-ci.yml`
 
 ### `include`
@@ -1279,8 +1203,6 @@ include:
 
 Очень важно фиксировать versioned `ref`, а не бесконтрольно зависеть от `main`.
 
-
-
 ### Hidden jobs
 
 Job, имя которой начинается с точки:
@@ -1292,8 +1214,6 @@ Job, имя которой начинается с точки:
 ```
 
 не запускается сама как обычная job и удобна как reusable configuration/template.
-
-
 
 ### `extends`
 
@@ -1319,11 +1239,7 @@ project job
 → project-specific variables/rules/overrides
 ```
 
-
-
-### Templates не должны превращаться в «весь мир»
-
-После обсуждения deployment architecture пришли к важному разделению:
+### Templates не должны быть глобальной зависимостью
 
 Shared CI templates хороши для повторяемых строительных блоков:
 
@@ -1336,8 +1252,6 @@ Shared CI templates хороши для повторяемых строител�
 ```
 
 Но не стоит тащить в каждый microservice через include всю инфраструктурную оркестрацию компании.
-
-
 
 ### Permissions shared templates
 
@@ -1369,8 +1283,6 @@ internal developers/QA
 
 Важно: `Internal` visibility — прежде всего Self-Managed модель; на GitLab.com её возможности отличаются.
 
-
-
 ### CI/CD Components и Catalog
 
 #### Что такое Component
@@ -1393,8 +1305,6 @@ component project
 
 `templates/` — часть формата component project.
 
-
-
 #### `spec:inputs`
 
 Component может иметь формальный интерфейс:
@@ -1411,8 +1321,6 @@ spec:
 Consumer передаёт inputs при `include:component`.
 
 Это делает reusable CI больше похожим на версионируемую библиотеку с контрактом, чем на произвольный YAML include.
-
-
 
 #### CI/CD Catalog
 
@@ -1439,8 +1347,6 @@ GitLab Release
 
 CI job с `release:` — лишь способ автоматизировать создание GitLab Release. Сам `script: echo ...` ничего «не публикует».
 
-
-
 #### Components vs обычные templates
 
 ```text
@@ -1455,11 +1361,44 @@ component
 → include:component
 ```
 
+Пример подключения по Components model:
+
+```yaml
+include:
+  - component: $CI_SERVER_FQDN/devops/ci-components/go-build@1.2.0
+    inputs:
+      go-version: "1.26"
+      stage: build
+```
+
+Здесь `go-build` — component name из:
+
+```text
+devops/ci-components
+└── templates/
+    └── go-build.yml
+```
+
+Пример подключения по обычной templates model:
+
+```yaml
+include:
+  - project: devops/ci-templates
+    ref: v1.2.0
+    file: /templates/go-build.yml
+```
+
+Здесь подключается обычный YAML-файл из repository:
+
+```text
+devops/ci-templates
+└── templates/
+    └── go-build.yml
+```
+
 Для простой внутренней инфраструктуры мы решили, что обычный `Internal ci-templates project` вполне может быть достаточен.
 
 Components становятся интереснее, когда нужен формализованный CI API/catalog/version lifecycle.
-
-
 
 ## 10. Debugging GitLab CI/CD
 
@@ -1476,8 +1415,6 @@ Components становятся интереснее, когда нужен фо
 8. CI Lint
 ```
 
-
-
 ### Pipeline graph
 
 Сначала понять:
@@ -1493,8 +1430,6 @@ Components становятся интереснее, когда нужен фо
 
 Это часто сразу показывает, проблема в execution или ещё в pipeline construction.
 
-
-
 ### Job log
 
 Если job реально запустилась — читаем log и отделяем:
@@ -1504,8 +1439,6 @@ GitLab/Runner infrastructure error
 от
 ошибки пользовательского script
 ```
-
-
 
 ### Job не появился вообще
 
@@ -1518,8 +1451,6 @@ only/except в старых конфигурациях
 include resolution
 YAML/config errors
 ```
-
-
 
 ### Job появился, но `pending`
 
@@ -1534,8 +1465,6 @@ concurrency?
 executor healthy?
 ```
 
-
-
 ### Artifact/cache problems
 
 Спрашиваем:
@@ -1548,8 +1477,6 @@ Artifact upload прошёл?
 Не перепутали artifact и cache?
 Совпадает cache key?
 ```
-
-
 
 ### CI Lint
 
@@ -1567,10 +1494,6 @@ CI Lint
 → диагностировать rules/configuration
 ```
 
-На собеседовании важнее понимать назначение, чем помнить координаты кнопки в конкретной версии UI.
-
-
-
 ## 11. Git branches, tags и Merge Requests в CI-контексте
 
 ### Branch
@@ -1578,8 +1501,6 @@ CI Lint
 Branch — подвижная Git reference на commit.
 
 Push в branch может создать branch pipeline.
-
-
 
 ### Tag
 
@@ -1594,8 +1515,6 @@ CI_COMMIT_TAG
 ```
 
 присутствует в tag context.
-
-
 
 ### Merge Request
 
@@ -1612,8 +1531,6 @@ MR pipeline важен потому, что pipeline знает:
 
 и получает MR-specific predefined variables.
 
-
-
 ### MR pipeline vs branch pipeline
 
 Один и тот же commit потенциально может участвовать в разных pipeline contexts.
@@ -1628,11 +1545,7 @@ MR pipeline
 
 когда нужен только один из них.
 
-
-
 ## 12. Multi-project downstream pipelines
-
-Это один из главных архитектурных выводов дня.
 
 Раньше cross-project deployment часто приходилось делать через:
 
@@ -1651,8 +1564,6 @@ trigger:
 ```
 
 Это **multi-project downstream pipeline**.
-
-
 
 ### Общая схема
 
@@ -1678,8 +1589,6 @@ PLATFORM / DEPLOYMENT PROJECT
 ```
 
 Это очень важная architectural boundary.
-
-
 
 ### Service repo выражает intent
 
@@ -1714,8 +1623,6 @@ ENVIRONMENT_KIND
 "создай review environment для этого image"
 ```
 
-
-
 ### Platform project реализует environment
 
 ```text
@@ -1740,8 +1647,6 @@ microservice
 → вызывает общий deployment control plane через стабильный контракт
 ```
 
-
-
 ### `strategy: mirror`
 
 Trigger job может отражать состояние downstream pipeline.
@@ -1759,8 +1664,6 @@ upstream видит failure
 ```
 
 То есть это не fire-and-forget webhook.
-
-
 
 ### Авторизация
 
@@ -1791,11 +1694,7 @@ Platform team
 → владельцы реализации
 ```
 
-
-
 ## 13. Где должен жить Environment при multi-project deployment
-
-Мы рассмотрели две модели.
 
 ### Модель A
 
@@ -1810,7 +1709,7 @@ service
 
 Работает, но lifecycle размазан по двум проектам.
 
-### Модель B — более чистая для нашей архитектуры
+### Модель B — чистая архитектура
 
 Deployment project владеет Environment:
 
@@ -1837,8 +1736,6 @@ infrastructure ownership
 ```
 
 Service project знает только deployment intent.
-
-
 
 ## 14. Review App через downstream deployment project
 
@@ -1882,10 +1779,6 @@ platform cleanup
 containers/namespaces/DB/buckets/etc deleted
 ```
 
-Плюс periodic reconciler как safety net.
-
-
-
 ## 15. Integration tests: ownership
 
 Не надо смешивать:
@@ -1925,8 +1818,6 @@ QA integration pipeline
 
 Multi-project downstream pipelines позволяют связать эти ownership boundaries без копирования всей логики в каждый service repository.
 
-
-
 ## 16. Production deployment architecture
 
 После merge:
@@ -1950,7 +1841,7 @@ MR merged
                     └── production
 ```
 
-Production authority не должна появляться в arbitrary feature branch pipeline только потому, что developer может менять `.gitlab-ci.yml`.
+Права на production не должны появляться в произвольном pipeline feature branch только потому, что разработчик может менять `.gitlab-ci.yml`.
 
 Главный security principle:
 
@@ -1959,16 +1850,13 @@ Production authority не должна появляться в arbitrary feature
 
 а
 
-"не дать developer-controlled pipeline production authority"
+"не давать pipeline, контролируемому разработчиком, права на production"
 ```
-
-
 
 ## 17. Итоговая архитектура CI/CD
 
 ```text
                        GITLAB
-
                 ┌──────────────────┐
                 │   Service repo   │
                 │                  │

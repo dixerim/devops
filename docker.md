@@ -142,6 +142,42 @@ EXPOSE ...
 
 Dockerfile описывает, как построить image.
 
+Коротко по основным инструкциям:
+
+**`FROM`** → задаёт base image, с которого начинается build stage.
+
+**`RUN`** → выполняет команду во время build и сохраняет filesystem-изменения в новый layer.
+
+**`COPY`** → копирует файлы из build context в image.
+
+**`ADD`** → как `COPY`, но дополнительно умеет распаковывать local tar archives и брать remote URLs; обычно лучше использовать `COPY`, если эти возможности не нужны.
+
+**`ENV`** → задаёт environment variable внутри image; значение будет доступно и во время build после этой инструкции, и в container runtime.
+
+**`ARG`** → задаёт build-time variable; доступна во время build, но сама по себе не становится runtime environment variable.
+
+**`WORKDIR`** → задаёт рабочий каталог для следующих `RUN`, `CMD`, `ENTRYPOINT`, `COPY` и `ADD`.
+
+**`USER`** → задаёт пользователя, от которого будут выполняться следующие инструкции и основной process в container.
+
+**`ENTRYPOINT`** → задаёт основной executable/argv prefix container.
+
+**`CMD`** → задаёт default command или default arguments; может быть переопределён при `docker run`.
+
+**`EXPOSE`** → metadata о порте, который приложение обычно слушает; не публикует порт на host.
+
+**`LABEL`** → добавляет metadata к image, например version, maintainer или source repository.
+
+**`VOLUME`** → объявляет mount point для данных, которые должны жить вне writable layer container.
+
+**`HEALTHCHECK`** → задаёт команду проверки здоровья container.
+
+**`SHELL`** → меняет shell, который используется для shell-form инструкций.
+
+**`STOPSIGNAL`** → задаёт signal, который Docker отправит основному process при остановке container.
+
+**`ONBUILD`** → регистрирует инструкцию-триггер, которая выполнится при build image-наследника.
+
 ### Layer
 
 **Layer** — сохранённый набор filesystem-изменений.

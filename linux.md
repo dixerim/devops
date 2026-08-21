@@ -372,11 +372,11 @@ D = ждёт внутри ядра и не реагирует немедленн
 
 ## 10. DMA, IRQ и устройство
 
-**DMA** → устройство передаёт данные между собой и RAM без копирования каждого байта CPU.
+**DMA (Direct Memory Access, прямой доступ к памяти)** → устройство передаёт данные между собой и RAM без копирования каждого байта CPU.
 
-**IRQ** → уведомление CPU о событии устройства.
+**IRQ (Interrupt Request, запрос прерывания)** → уведомление CPU о событии устройства.
 
-**MSI/MSI-X** → PCIe-устройство сигнализирует прерыванием через специальную memory write transaction.
+**MSI/MSI-X (Message Signaled Interrupts / Message Signaled Interrupts eXtended, прерывания через сообщения / расширенные прерывания через сообщения)** → PCIe-устройство сигнализирует прерыванием через специальную memory write transaction.
 
 Типичный read с диска:
 
@@ -503,13 +503,13 @@ CPU низкий, load 20.0
 
 **Virtual address** → адрес, которым пользуется процесс.
 
-**MMU** → переводит virtual address в physical address.
+**MMU (Memory Management Unit, блок управления памятью)** → переводит virtual address в physical address.
 
 **Page table** → `virtual page → physical page frame + flags`.
 
-**TLB** → кеш переводов виртуальных адресов.
+**TLB (Translation Lookaside Buffer, буфер быстрого преобразования адресов)** → кеш переводов виртуальных адресов.
 
-**VMA** → диапазон virtual addresses с общими permissions и backing/mapping properties.
+**VMA (Virtual Memory Area, область виртуальной памяти)** → диапазон virtual addresses с общими permissions и backing/mapping properties.
 
 **Page fault** → нужного mapping/page сейчас нет или нарушены права.
 
