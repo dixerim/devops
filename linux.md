@@ -521,19 +521,46 @@ CPU низкий, load 20.0
 
 ## 14. Аллокаторы памяти
 
-**`malloc()`** → userspace allocator, не системный вызов.
+**`malloc()`** → userspace heap allocator из libc, не системный вызов и не allocator физических страниц.
 
-**`mmap()` / `brk()`** → способы получить виртуальные диапазоны у ядра.
+Он выдаёт приложению куски уже имеющегося heap/arena или, если памяти в arena не хватает, просит у ядра новый виртуальный диапазон через `brk()`/`mmap()`.
 
-**Buddy allocator** → выдаёт физические страницы ядру.
+**Arena** → область памяти, которой userspace allocator управляет сам: режет на chunks, переиспользует freed chunks и уменьшает lock contention между threads.
+
+**`mmap()` / `brk()`** → системные вызовы, через которые процесс просит ядро создать или расширить virtual memory mapping.
+
+Важно:
+
+```text
+malloc()
+→ userspace allocator выбирает/создаёт chunk в arena
+→ при необходимости brk()/mmap() создаёт virtual address range
+→ физической RAM может ещё не быть
+→ first touch вызывает page fault
+→ ядро берёт physical page у Buddy allocator
+→ обновляет page table
+→ процесс продолжает выполнение в userspace
+```
+
+**Buddy allocator** → основной allocator физических страниц в kernel; выдаёт page frames по запросу ядра.
+
+Эти physical pages могут использоваться для разных целей:
+
+- userspace anonymous memory после page fault;
+- page cache;
+- kernel stacks;
+- slab/SLUB allocations;
+- buffers для drivers, network, DMA и других kernel subsystems.
 
 **SLUB** → выделяет маленькие типизированные kernel objects.
+
+SLUB обычно берёт страницы у Buddy allocator и режет их на объекты нужного размера/типа.
 
 **`kmalloc()`** → маленькие физически непрерывные kernel allocations, обычно через SLUB.
 
 **`vmalloc()`** → виртуально непрерывная, физически разбросанная память ядра.
 
-**First touch** → физическая страница часто выделяется при первом обращении, а не при `malloc()`.
+**First touch** → физическая страница часто выделяется при первом обращении к virtual page, а не при `malloc()`.
 
 
 
