@@ -724,7 +724,7 @@ DNAT/SNAT/port forwarding rule → статическое правило тра�
 conntrack entry                → динамическая запись о конкретном flow
 ```
 
-Удобная модель через 5-tuple:
+Удобная модель conntrack entry через 5-tuple: набор полей, по которым packet относится к конкретному flow.
 
 ```text
 protocol
@@ -913,7 +913,7 @@ ICE строит **candidate pairs**, даёт им priorities, делает con
 
 **DROP** → молча выбросить.
 
-**REJECT** → отклонить и вернуть ошибку.
+**REJECT** → отклонить packet и попросить kernel/netfilter отправить error response.
 
 **Stateful firewall** → использует conntrack.
 
@@ -1026,12 +1026,12 @@ service слушает и отвечает → connection работает
 service не слушает        → host обычно вернёт TCP RST / ICMP error
 ```
 
-**REJECT** → packet запрещён, но firewall явно отвечает ошибкой.
+**REJECT** → packet запрещён, но kernel/netfilter явно отправляет error response от имени этого host/router.
 
 Для клиента это быстрый отказ:
 
 ```text
-TCP → обычно reset / connection refused
+TCP → обычно TCP RST; для клиента это часто выглядит как connection refused/reset
 UDP → обычно ICMP port/admin unreachable
 ```
 

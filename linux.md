@@ -2,9 +2,11 @@
 
 ## 1. Процесс, поток и `task_struct`
 
-**`task_struct`** → объект ядра для одной планируемой сущности: процесса или потока.
+**`task_struct`** → объект ядра для одной планируемой сущности: task/thread.
 
-**Процесс** → группа потоков, обычно разделяющих память, FD, cwd/root и обработчики сигналов.
+В Linux kernel нет отдельного scheduler-объекта «процесс». Scheduler планирует `task_struct`.
+
+**Процесс в userspace-смысле** → thread group из одного или нескольких `task_struct`, обычно разделяющих память, FD, cwd/root и обработчики сигналов.
 
 **Поток** → отдельный `task_struct`, который выполняется планировщиком, но может разделять ресурсы с другими потоками процесса.
 
@@ -319,6 +321,8 @@ fatal/job-control default action действует на всю thread group.
 
 **`D`** → uninterruptible sleep; ждёт завершения kernel operation, часто I/O.
 
+Мнемоника: `D` ≈ disk sleep. Исторически это состояние чаще всего видели при ожидании disk/block I/O. Сейчас причина может быть не только диск, а любая uninterruptible kernel wait, но связь `D → disk-like I/O wait` помогает запомнить.
+
 **`T`** → stopped или traced.
 
 **`Z`** → zombie.
@@ -411,7 +415,9 @@ read()
 
 **steal** → гипервизор забрал виртуальный CPU.
 
-**nice** → user CPU для процессов с изменённым nice.
+**nice** → сколько CPU time было потрачено в userspace процессами, у которых nice value отличается от обычного.
+
+**nice value** → scheduler priority hint для обычных процессов: больше nice → процесс «уступчивее» и получает CPU менее охотно; меньше nice → выше приоритет.
 
 Цвета CPU-полоски в `htop`:
 
@@ -472,7 +478,7 @@ TASK_RUNNING + TASK_UNINTERRUPTIBLE
 
 ```text
 высокий load + высокий CPU
-→ вероятна CPU saturation
+→ вероятна CPU saturation (CPU загружен до предела, runnable tasks конкурируют за CPU time)
 
 высокий load + низкий CPU
 → искать D-state, storage, NFS, cgroup quota, affinity
@@ -776,6 +782,8 @@ swappiness
 **`oom_score`** → текущая привлекательность процесса как жертвы.
 
 **`oom_score_adj`** → ручная поправка от `-1000` до `1000`.
+
+**`oom_adj`** → legacy-интерфейс для той же идеи: поправка к выбору OOM-жертвы на старой шкале примерно от `-17` до `15`; в новых системах вместо него обычно используют `oom_score_adj`.
 
 **`-1000`** → не выбирать обычным OOM killer; не гарантирует работоспособность системы.
 
@@ -1747,12 +1755,13 @@ drwxrwxrwT  sticky есть, others execute нет
 
 Примеры:
 
-```text
-CAP_NET_BIND_SERVICE
-CAP_CHOWN
-CAP_KILL
-CAP_SYS_ADMIN
-```
+**`CAP_NET_BIND_SERVICE`** → разрешает bind на privileged ports ниже `1024`, например `:80` или `:443`, без полного root.
+
+**`CAP_CHOWN`** → разрешает менять владельца и группу файлов через `chown()`/`fchown()` даже там, где обычному пользователю это запрещено.
+
+**`CAP_KILL`** → разрешает отправлять signals процессам, которые принадлежат другим UID, обходя обычную permission-проверку для `kill()`.
+
+**`CAP_SYS_ADMIN`** → очень широкая capability для множества admin-операций: mount/umount, часть namespace/cgroup/ioctl-операций и другие privileged kernel actions. Практически это “почти root” для многих сценариев, поэтому её лучше не выдавать без крайней необходимости.
 
 ```bash
 setcap 'cap_net_bind_service=+ep' ./server

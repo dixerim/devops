@@ -846,6 +846,8 @@ Host действует как router для packet, который пришёл
 
 ## 13. Docker bridge network
 
+**Linux bridge** → виртуальный L2 switch внутри Linux kernel.
+
 Типичная topology:
 
 ```text

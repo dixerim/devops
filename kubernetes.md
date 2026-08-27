@@ -2,7 +2,7 @@
 
 ## 1. Что такое Kubernetes
 
-**Kubernetes** — distributed userspace-система, которая через API хранит желаемую конфигурацию и наблюдаемое состояние объектов, а набор независимых компонентов пытается привести реальную инфраструктуру к требуемому состоянию.
+**Kubernetes** — оркестратор контейнерных workloads: distributed userspace-система, которая через API хранит desired state, планирует Pods на Nodes и набором controllers/agents приводит реальную инфраструктуру к этому состоянию.
 
 Ключевая граница:
 
@@ -71,7 +71,7 @@ cloud-controller-manager (если нужна cloud-specific интеграци�
 kubelet
 container runtime
 Pod network implementation / CNI components
-Service networking implementation (например kube-proxy)
+Service networking implementation: обычно kube-proxy; иногда kube-proxy replacement от CNI/eBPF implementation
 ```
 
 ### Control-plane node vs master node
@@ -246,6 +246,33 @@ quorum = 2
 2 alive → quorum есть
 1 alive → quorum потерян
 ```
+
+Для 2 members:
+
+```text
+quorum = 2
+```
+
+```text
+2 alive → работает
+1 alive → quorum потерян
+```
+
+Почему не `quorum = 1`: quorum — это большинство от configured members, а не “сколько сейчас осталось живых”.
+
+Общая формула:
+
+```text
+quorum = floor(N / 2) + 1
+```
+
+Для `N = 2`:
+
+```text
+floor(2 / 2) + 1 = 2
+```
+
+Поэтому etcd cluster из двух members не переживает потерю одного member. Для отказоустойчивости обычно используют нечётное количество voting members, например `3` или `5`.
 
 ### Stacked etcd
 
@@ -476,11 +503,68 @@ resources.limits.cpu
 → конфигурация, которая переводится в cgroup CPU enforcement
 ```
 
+### Controllers, controller-manager и reconciliation
+
+Kubernetes object сам ничего не делает.
+
+Изменения выполняют controllers — циклы управления, которые наблюдают API state и пишут обратно в API новые/изменённые objects.
+
+`kube-controller-manager` — Control Plane process, внутри которого работают core controllers:
+
+```text
+Deployment controller
+ReplicaSet controller
+StatefulSet controller
+DaemonSet controller
+Job controller
+CronJob controller
+EndpointSlice controller
+Node controller
+PersistentVolume controller
+Attach/Detach controller
+...
+```
+
+Главная модель:
+
+```text
+desired state в API
+↓
+controller смотрит current state
+↓
+controller создаёт/обновляет/удаляет API objects
+↓
+другие components доводят это до runtime
+```
+
+Пример:
+
+```text
+Deployment object
+↓ observed by Deployment controller
+ReplicaSet object
+↓ observed by ReplicaSet controller
+Pod objects
+↓ observed by scheduler/kubelet
+Linux processes
+```
+
+Поэтому `Deployment` и `ReplicaSet` не являются процессами. Это API objects, за которыми стоят controllers.
+
 ## 9. Namespace
 
 **Kubernetes Namespace** — логический scope для namespaced API objects.
 
 Не путать с Linux namespace.
+
+Минимальный YAML:
+
+```yaml
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: prod
+```
 
 Базовые операции через `kubectl`:
 
@@ -554,6 +638,24 @@ Pod содержит один или несколько containers, которы
 всегда размещаются на одной Node
 делят один Pod network namespace
 могут совместно использовать volumes
+```
+
+Минимальный YAML:
+
+```yaml
+apiVersion: v1
+kind: Pod
+metadata:
+  name: nginx
+  namespace: default
+  labels:
+    app: nginx
+spec:
+  containers:
+    - name: nginx
+      image: nginx:1.27
+      ports:
+        - containerPort: 80
 ```
 
 ### Pod network
@@ -638,6 +740,8 @@ running Pods
 
 Node object содержит observed information, например conditions и resource capacity/allocatable.
 
+Node lifecycle наблюдает node controller внутри `kube-controller-manager`: он следит за Node heartbeats/status, выставляет conditions/taints и запускает eviction logic при потере Node.
+
 ### Node Ready
 
 Condition `Ready` отражает, считает ли Control Plane Node работоспособной по информации от kubelet/heartbeats.
@@ -647,6 +751,20 @@ Ready=True
 Ready=False
 Ready=Unknown
 ```
+
+kubelet регулярно отправляет heartbeats в API: чаще всего обновляет lightweight `Lease` object в `kube-node-lease` namespace, а также периодически обновляет `Node.status`.
+
+Если heartbeats перестают приходить, node controller сначала перестаёт считать Node надёжно наблюдаемой:
+
+```text
+kubelet heartbeats пропали
+→ Node Ready=Unknown
+→ Node получает taints вроде node.kubernetes.io/unreachable
+→ Pods на этой Node больше не считаются надёжно живыми
+→ после timeout control plane начинает eviction/rescheduling через controllers
+```
+
+Control Plane при этом не знает, умерла ли машина, сеть до неё или только kubelet. Он видит потерю heartbeats и действует консервативно: перестаёт отправлять туда новые Pods и пытается восстановить desired state на других Nodes.
 
 ### Что реально запускается на Node
 
@@ -707,14 +825,38 @@ Linux process/namespaces/cgroups/mounts
 
 ## 14. ReplicaSet
 
-**ReplicaSet** — namespaced object, который поддерживает требуемое количество Pods, matching его selector.
+**ReplicaSet** — объект в namespace с desired state: сколько Pods должно существовать и какой selector/template использовать.
+
+Реальную работу выполняет ReplicaSet controller внутри `kube-controller-manager`.
 
 Основные части:
 
 ```text
-selector → КАКИЕ Pods считать своими/matching
+selector → КАКИЕ Pods считать своими
 replicas → СКОЛЬКО Pods нужно
 template → КАК создать новый Pod
+```
+
+Пример YAML для static local PV:
+
+```yaml
+apiVersion: apps/v1
+kind: ReplicaSet
+metadata:
+  name: api-rs
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: api
+  template:
+    metadata:
+      labels:
+        app: api
+    spec:
+      containers:
+        - name: api
+          image: example/api:1.0
 ```
 
 Пример:
@@ -726,21 +868,45 @@ actual matching Pods = 2
 ReplicaSet controller создаёт ещё один Pod object
 ```
 
-ReplicaSet controller работает внутри `kube-controller-manager`.
-
 ReplicaSet обычно не создают вручную, потому что им управляет Deployment.
 
 ## 15. Deployment
 
-**Deployment** — namespaced controller object для declarative lifecycle stateless Pods через ReplicaSets.
+**Deployment** — объект в namespace с desired state для stateless workload: сколько replicas нужно и какой Pod template должен быть запущен.
+
+Реальную работу выполняет Deployment controller: он наблюдает Deployment object и создаёт/обновляет ReplicaSets через Kubernetes API.
+
+Минимальный YAML:
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api
+spec:
+  replicas: 3
+  selector:
+    matchLabels:
+      app: api
+  template:
+    metadata:
+      labels:
+        app: api
+    spec:
+      containers:
+        - name: api
+          image: example/api:1.0
+          ports:
+            - containerPort: 8080
+```
 
 Связь:
 
 ```text
 Deployment
-↓ owns/manages
+↓ owner reference / управляется Deployment controller
 ReplicaSet
-↓ owns/manages
+↓ owner reference / управляется ReplicaSet controller
 Pods
 ```
 
@@ -794,9 +960,47 @@ Rollback делает предыдущий Pod template снова требуе�
 
 ## 17. StatefulSet
 
-**StatefulSet** — namespaced controller object для stateful Pods со стабильными identities.
+**StatefulSet** — объект в namespace с desired state для stateful Pods со стабильными identities.
+
+Реальную работу выполняет StatefulSet controller внутри `kube-controller-manager`.
 
 Он создаёт Pods напрямую, без ReplicaSet.
+
+Пример YAML для PVC, который может связаться с PV выше:
+
+```yaml
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: db
+spec:
+  serviceName: db-headless
+  replicas: 3
+  selector:
+    matchLabels:
+      app: db
+  template:
+    metadata:
+      labels:
+        app: db
+    spec:
+      containers:
+        - name: db
+          image: postgres:17
+          ports:
+            - containerPort: 5432
+          volumeMounts:
+            - name: data
+              mountPath: /var/lib/postgresql/data
+  volumeClaimTemplates:
+    - metadata:
+        name: data
+      spec:
+        accessModes: ["ReadWriteOnce"]
+        resources:
+          requests:
+            storage: 10Gi
+```
 
 Например:
 
@@ -838,7 +1042,30 @@ StatefulSet НЕ реплицирует application data между replicas.
 
 ## 18. DaemonSet
 
-**DaemonSet** — controller object, обеспечивающий по одному Pod на каждой подходящей Node.
+**DaemonSet** — объект в namespace с desired state: по одному Pod на каждой подходящей Node.
+
+Реальную работу выполняет DaemonSet controller внутри `kube-controller-manager`: он создаёт/удаляет Pods при появлении, исчезновении или изменении подходящих Nodes.
+
+Пример YAML для static local PV:
+
+```yaml
+apiVersion: apps/v1
+kind: DaemonSet
+metadata:
+  name: node-agent
+spec:
+  selector:
+    matchLabels:
+      app: node-agent
+  template:
+    metadata:
+      labels:
+        app: node-agent
+    spec:
+      containers:
+        - name: agent
+          image: example/node-agent:1.0
+```
 
 ```text
 Node A → Pod
@@ -863,7 +1090,26 @@ storage agent
 
 ### Job
 
-**Job** — object для конечной работы, которая должна успешно завершиться определённое количество раз.
+**Job** — объект для конечной работы, которая должна успешно завершиться определённое количество раз.
+
+Реальную работу выполняет Job controller внутри `kube-controller-manager`: он создаёт Pods и следит за успешными/неуспешными attempts.
+
+Пример YAML для PVC, который может связаться с PV выше:
+
+```yaml
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: migrate-db
+spec:
+  template:
+    spec:
+      restartPolicy: OnFailure
+      containers:
+        - name: migrate
+          image: example/app:1.0
+          command: ["./app", "migrate"]
+```
 
 Основные параметры:
 
@@ -874,19 +1120,69 @@ parallelism
 
 Job controller создаёт Pods напрямую.
 
-Если попытка работы завершилась неуспешно, дальнейшее поведение зависит от Pod `restartPolicy` и Job retry/backoff logic:
+Если попытка работы завершилась неуспешно, поведение зависит от Pod `restartPolicy`.
+
+Для Job обычно используются только:
 
 ```text
-container restart inside same Pod
-или
-new Pod attempt
+restartPolicy: OnFailure
+restartPolicy: Never
+```
+
+`restartPolicy: Always` для Job не подходит: Job должен когда-то завершиться.
+
+При `OnFailure`:
+
+```text
+container process exit code != 0
+→ kubelet перезапускает container внутри того же Pod
+→ Pod object обычно остаётся тем же
+→ container restart count растёт
+```
+
+При `Never`:
+
+```text
+container process exit code != 0
+→ container не перезапускается
+→ Pod становится Failed
+→ Job controller создаёт новый Pod attempt, если backoff/лимиты позволяют
+```
+
+То есть:
+
+```text
+OnFailure → retry внутри того же Pod через container restart
+Never     → retry через новый Pod object
 ```
 
 Это разные lifecycle события.
 
 ### CronJob
 
-**CronJob** — object, создающий Job objects по расписанию.
+**CronJob** — объект, создающий Job objects по расписанию.
+
+Реальную работу выполняет CronJob controller внутри `kube-controller-manager`: он смотрит на расписание и создаёт Job objects в нужные моменты.
+
+Пример YAML:
+
+```yaml
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: cleanup
+spec:
+  schedule: "*/15 * * * *"
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          restartPolicy: OnFailure
+          containers:
+            - name: cleanup
+              image: example/app:1.0
+              command: ["./app", "cleanup"]
+```
 
 Поле schedule задаёт календарное расписание запуска Job. CronJob не запускает Pod напрямую.
 
@@ -904,13 +1200,41 @@ Pod
 
 ### ConfigMap
 
-**ConfigMap** — namespaced object для несекретной application configuration.
+**ConfigMap** — объект в namespace для несекретной application configuration.
+
+ConfigMap хранит набор string keys и values.
+
+Пример:
+
+```yaml
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: app-config
+data:
+  APP_MODE: "prod"
+  LOG_LEVEL: "info"
+  nginx.conf: |
+    server {
+      listen 8080;
+    }
+```
+
+Здесь:
+
+```text
+APP_MODE   → key со строковым value
+LOG_LEVEL  → key со строковым value
+nginx.conf → key, который удобно смонтировать как file name
+```
+
+ConfigMap сам не меняет приложение. Он только хранит данные в Kubernetes API.
 
 Pod может получить ConfigMap как:
 
 ```text
-environment variables
-files through volume mount
+environment variables → key/value становятся env vars container process
+files through volume mount → keys становятся file names, values становятся file contents
 ```
 
 Environment variables фиксируются при запуске process; изменение ConfigMap не переписывает environment уже работающего process.
@@ -919,7 +1243,31 @@ Mounted files могут обновляться позже; приложение
 
 ### Secret
 
-**Secret** — namespaced object для данных, которые Kubernetes рассматривает как sensitive configuration.
+**Secret** — объект в namespace для данных, которые Kubernetes рассматривает как sensitive configuration.
+
+Secret похож на ConfigMap по способам использования, но предназначен для паролей, tokens, certificates и других sensitive values.
+
+Пример:
+
+```yaml
+apiVersion: v1
+kind: Secret
+metadata:
+  name: db-secret
+type: Opaque
+stringData:
+  DB_USER: "app"
+  DB_PASSWORD: "secret-password"
+```
+
+`stringData` удобно писать руками: Kubernetes примет обычные строки и сохранит их в `data` в base64-представлении.
+
+Pod может получить Secret как:
+
+```text
+environment variables → key/value становятся env vars container process
+files through volume mount → keys становятся file names, values становятся file contents
+```
 
 Base64 encoding не является encryption.
 
@@ -929,7 +1277,47 @@ Encryption at rest защищает persistent representation в backing storage
 
 ## 21. Requests и limits
 
-CPU и memory задаются на container level.
+Requests и limits задаёт автор workload manifest: разработчик, platform team, Helm chart, Operator или другой client Kubernetes API.
+
+Они задаются на container level в `spec.containers[].resources`.
+
+Пример:
+
+```yaml
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: api
+  template:
+    metadata:
+      labels:
+        app: api
+    spec:
+      containers:
+        - name: api
+          image: example/api:1.0
+          resources:
+            requests:
+              cpu: "250m"
+              memory: "256Mi"
+            limits:
+              cpu: "500m"
+              memory: "512Mi"
+```
+
+Кто использует эти значения:
+
+```text
+requests → scheduler решает, на какую Node можно поставить Pod
+limits   → kubelet/runtime настраивают Linux cgroups для container
+```
+
+Если в Pod несколько containers, requests/limits задаются отдельно для каждого container, а scheduler учитывает сумму requests по Pod.
 
 ### Request
 
@@ -958,7 +1346,7 @@ sum(requests assigned Pods)
 
 Kubernetes CPU limit переводится kubelet/runtime в Linux cgroup CPU bandwidth control.
 
-Conceptually:
+Упрощённо:
 
 ```text
 limit = 500m
@@ -991,13 +1379,69 @@ kubelet может restart container
 
 ### Node pressure eviction
 
-Отдельно kubelet следит за Node pressure signals и может эвиктить Pods, чтобы освободить ресурсы.
+Отдельно kubelet следит за Node pressure signals и может эвиктить Pods, чтобы освободить ресурсы на Node.
 
 Это не тот же механизм, что kernel OOM.
 
+Типичные signals:
+
+```text
+memory.available
+nodefs.available / nodefs.inodesFree
+imagefs.available / imagefs.inodesFree
+pid.available
+```
+
+Когда signal пересекает configured threshold, kubelet считает, что Node под давлением:
+
+```text
+memory.available слишком низкий
+или
+disk/inodes заканчиваются
+или
+PID space заканчивается
+```
+
+Дальше kubelet пытается освободить ресурсы:
+
+```text
+1. local reclaim, если возможно
+   например garbage collection unused images/containers
+
+2. если reclaim не помог
+   выбрать Pods для eviction
+
+3. graceful terminate выбранные Pods
+   с учётом eviction grace period
+
+4. Pod получает status Failed / reason Evicted
+```
+
+Для memory pressure порядок выбора обычно учитывает QoS и превышение requests:
+
+```text
+BestEffort → первые кандидаты
+Burstable  → если использует больше request
+Guaranteed → обычно последние кандидаты
+```
+
+Важно:
+
+```text
+Node pressure eviction
+→ kubelet proactive action до полной катастрофы Node
+
+kernel OOM
+→ ядро уже не смогло выделить память и убивает process
+```
+
 ### QoS classes
 
-Conceptually:
+QoS class вычисляется Kubernetes автоматически по requests/limits всех containers в Pod.
+
+Он не задаётся отдельным полем.
+
+Возможные классы:
 
 ```text
 Guaranteed
@@ -1005,7 +1449,58 @@ Burstable
 BestEffort
 ```
 
-QoS вычисляется из requests/limits Pod containers; не задаётся отдельным switch.
+### Guaranteed
+
+Pod получает `Guaranteed`, если у каждого container заданы CPU и memory request/limit, и для каждого ресурса:
+
+```text
+request == limit
+```
+
+Пример:
+
+```yaml
+resources:
+  requests:
+    cpu: "500m"
+    memory: "512Mi"
+  limits:
+    cpu: "500m"
+    memory: "512Mi"
+```
+
+### Burstable
+
+Pod получает `Burstable`, если он не `Guaranteed`, но хотя бы у одного container задан request или limit.
+
+Пример:
+
+```yaml
+resources:
+  requests:
+    cpu: "250m"
+    memory: "256Mi"
+  limits:
+    memory: "512Mi"
+```
+
+### BestEffort
+
+Pod получает `BestEffort`, если ни у одного container не заданы ни requests, ни limits.
+
+Пример:
+
+```yaml
+resources: {}
+```
+
+Практический смысл при memory pressure:
+
+```text
+BestEffort → первые кандидаты на eviction
+Burstable  → дальше, особенно если usage > request
+Guaranteed → обычно последние кандидаты
+```
 
 Guaranteed не означает «невозможно убить».
 
@@ -1229,7 +1724,7 @@ associate remote Pod subnets with remote Node IPs
 
 VXLAN позволяет переносить виртуальный Ethernet traffic поверх обычной IP network.
 
-Conceptually:
+Схема:
 
 ```text
 inner Ethernet frame
@@ -1266,7 +1761,7 @@ UDP / VXLAN
 
 Physical network знает только реальные Node addresses.
 
-После прихода на Node B Linux VXLAN subsystem decapsulates packet и передаёт inner traffic в virtual datapath.
+После прихода на Node B ядро Linux снимает VXLAN-обёртку и передаёт внутренний packet дальше в виртуальную сеть Pod'ов.
 
 ### FDB
 
@@ -1359,6 +1854,8 @@ Resolver отправляет обычный DNS packet к CoreDNS Service.
 
 Kubernetes не подменяет `getaddrinfo()`.
 
+**FQDN (Fully Qualified Domain Name)** → полное DNS-имя.
+
 Типичный Service FQDN:
 
 ```text
@@ -1370,6 +1867,27 @@ Kubernetes не подменяет `getaddrinfo()`.
 **Service** — namespaced Kubernetes object, предоставляющий стабильный сетевой endpoint поверх динамического набора backend endpoints.
 
 Service не создаёт Pods.
+
+Пример YAML:
+
+```yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: api
+spec:
+  type: ClusterIP
+  selector:
+    app: api
+  ports:
+    - name: http
+      port: 80
+      targetPort: 8080
+```
+
+Если у Service есть selector, EndpointSlice controller внутри `kube-controller-manager` поддерживает EndpointSlice objects со списком подходящих backend Pods.
+
+Сам Service dataplane реализует не Service object, а node-side implementation: обычно kube-proxy, иногда eBPF/kube-proxy replacement.
 
 Типичная связь:
 
@@ -1458,7 +1976,7 @@ Pod IP → физически нужная Node/Pod
 
 ## 34. NodePort
 
-**NodePort** — Service exposure через порт на Node addresses.
+**NodePort** — тип Service, который делает Service доступным через один и тот же порт на каждой Node.
 
 Например:
 
@@ -1466,9 +1984,28 @@ Pod IP → физически нужная Node/Pod
 <Node-IP>:32080
 ```
 
+Запрос на `NodeIP:nodePort` попадает на выбранную Node, где правила Service networking перенаправляют его к одному из backend Pods.
+
+Пример YAML:
+
+```yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: api-nodeport
+spec:
+  type: NodePort
+  selector:
+    app: api
+  ports:
+    - port: 80
+      targetPort: 8080
+      nodePort: 32080
+```
+
 Это не обязательно userspace process, который делает `listen(32080)`.
 
-Conceptually:
+Схема:
 
 ```text
 client
@@ -1592,6 +2129,59 @@ clusterIP: None
 этому Service нужен внешний load-balanced endpoint
 ```
 
+Пример YAML:
+
+```yaml
+apiVersion: v1
+kind: Service
+metadata:
+  name: api-lb
+spec:
+  type: LoadBalancer
+  selector:
+    app: api
+  ports:
+    - port: 80
+      targetPort: 8080
+```
+
+Частый production-сценарий: `LoadBalancer` дают не каждому application Service, а edge-компоненту, например Ingress Controller.
+
+```yaml
+# внешний вход в cluster
+apiVersion: v1
+kind: Service
+metadata:
+  name: ingress-nginx-controller
+spec:
+  type: LoadBalancer
+  selector:
+    app: ingress-nginx
+  ports:
+    - port: 80
+      targetPort: 80
+    - port: 443
+      targetPort: 443
+```
+
+Тогда цепочка выглядит так:
+
+```text
+mysite.com
+↓ DNS
+external LoadBalancer IP
+↓
+Service type=LoadBalancer для Ingress Controller
+↓
+Ingress Controller Pod
+↓
+Ingress/Gateway rules
+↓
+обычные ClusterIP Services приложения
+↓
+application Pods
+```
+
 Сам Kubernetes API не создаёт физический внешний LB из воздуха.
 
 Нужна implementation:
@@ -1682,7 +2272,7 @@ IPv4 local L2 neighbor resolution:
 
 ### NDP
 
-IPv6 neighbor discovery; conceptually решает соответствующую neighbor-level задачу для IPv6.
+IPv6 neighbor discovery; по смыслу решает такую же задачу поиска L2-соседа для IPv6.
 
 ### BGP
 
@@ -1695,13 +2285,13 @@ ARP/NDP → local L2 neighbor reachability
 BGP     → L3 route advertisement
 ```
 
-Это не Kubernetes mechanisms; Kubernetes network products используют обычные сетевые protocols.
+Это не собственные механизмы Kubernetes. Сетевые решения для Kubernetes используют обычные сетевые протоколы.
 
 ## 43. K3s ServiceLB
 
 K3s может предоставлять встроенную implementation `Service type=LoadBalancer` через ServiceLB.
 
-Conceptually:
+Схема:
 
 ```text
 Service type=LoadBalancer
@@ -1738,6 +2328,28 @@ backend
 **Ingress** — namespaced API resource, описывающий HTTP/HTTPS routing rules к Services.
 
 Ingress object сам не proxy.
+
+Пример YAML:
+
+```yaml
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: api
+spec:
+  ingressClassName: nginx
+  rules:
+    - host: api.example.com
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: api
+                port:
+                  number: 80
+```
 
 ### Ingress Controller
 
@@ -1812,7 +2424,7 @@ Gateway object тоже не является proxy; нужна конкретн
 
 ```text
 external LB / IP publication
-→ как traffic вообще вошёл в cluster
+→ внешний IP/DNS и L4-доставка трафика к edge Service targets, обычно к Pods Ingress/Gateway Controller
 
 Ingress/Gateway proxy
 → куда отправить HTTP/TLS traffic внутри
@@ -1861,7 +2473,7 @@ scheduler           ≠ application proxy
 controller-manager  ≠ application proxy
 ```
 
-## 47. Главное: Kubernetes не создаёт storage из воздуха
+## 47. Persistent storage: API objects и реальный backend
 
 Persistent storage имеет два мира:
 
@@ -1870,6 +2482,8 @@ Kubernetes API abstractions
 +
 реальный storage backend
 ```
+
+Главное: Kubernetes не создаёт storage из воздуха.
 
 Реальные bytes предоставляет:
 
@@ -1893,6 +2507,32 @@ Kubernetes управляет связью workload ↔ storage, но сам н�
 PV = конкретный storage resource, известный Kubernetes
 ```
 
+Пример YAML:
+
+```yaml
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: local-pv-1
+spec:
+  capacity:
+    storage: 10Gi
+  accessModes:
+    - ReadWriteOnce
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: local-storage
+  local:
+    path: /mnt/disks/ssd1
+  nodeAffinity:
+    required:
+      nodeSelectorTerms:
+        - matchExpressions:
+            - key: kubernetes.io/hostname
+              operator: In
+              values:
+                - worker-1
+```
+
 PV не является:
 
 ```text
@@ -1912,6 +2552,22 @@ Pod'ом
 PVC = "дай мне storage с такими требованиями"
 ```
 
+Пример YAML:
+
+```yaml
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: data
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: local-storage
+  resources:
+    requests:
+      storage: 10Gi
+```
+
 Связь:
 
 ```text
@@ -1926,6 +2582,16 @@ real storage resource
 
 PVC не привязывается к Pod как owner; другой Pod в соответствующем lifecycle может использовать тот же PVC.
 
+В static provisioning `storageClassName`, `accessModes` и размер PVC должны совпасть с подходящим PV. В примере выше PVC не выбирает `/mnt/disks/ssd1` напрямую, но его требования подходят к `local-pv-1`, поэтому persistent volume controller может связать:
+
+```text
+PVC data
+↓ storageClassName=local-storage, size=10Gi, RWO
+PV local-pv-1
+↓
+/mnt/disks/ssd1 на worker-1
+```
+
 ## 50. PV/PVC binding
 
 **Binding** — установление связи между конкретным PVC и конкретным PV.
@@ -1937,6 +2603,8 @@ matching PV
 ```
 
 Binding — control-plane связь API objects.
+
+Реальную работу binding выполняет persistent volume controller внутри `kube-controller-manager`: он сопоставляет PVC с подходящим PV и записывает эту связь в API.
 
 ```text
 binding ≠ mount
@@ -1955,7 +2623,23 @@ StorageClass fast-ssd
 storage implementation
 ```
 
+Пример YAML для dynamic provisioning:
+
+```yaml
+apiVersion: storage.k8s.io/v1
+kind: StorageClass
+metadata:
+  name: fast-ssd
+provisioner: example.com/csi-driver
+parameters:
+  type: ssd
+reclaimPolicy: Delete
+volumeBindingMode: WaitForFirstConsumer
+```
+
 StorageClass не является самим volume.
+
+StorageClass обычно используется dynamic provisioner'ом. В CSI-сценарии это чаще external CSI provisioner, а не сам `kube-controller-manager`.
 
 ## 52. Static и dynamic provisioning
 
@@ -1993,6 +2677,20 @@ PVC ↔ PV
 
 Dynamic provisioning не означает, что Kubernetes физически создаёт storage сам; storage backend делает это через integration.
 
+Обычно это выглядит так:
+
+```text
+PVC создан
+↓
+external provisioner видит PVC + StorageClass
+↓
+просит storage backend создать volume
+↓
+создаёт PV object
+↓
+persistent volume controller связывает PVC ↔ PV
+```
+
 ## 53. CSI
 
 **CSI = Container Storage Interface**.
@@ -2011,13 +2709,102 @@ storage backend
 
 CSI driver — реализация этого interface для конкретной storage system.
 
-Conceptually есть control-plane-side и node-side storage operations.
+У CSI есть операции со стороны Control Plane и операции со стороны Node.
+
+Что ставить в новый cluster:
+
+```text
+Kubernetes сам по себе не даёт production storage.
+После установки cluster обычно нужно выбрать и установить storage implementation.
+```
+
+Выбор зависит от того, где работает cluster:
+
+```text
+AWS
+→ обычно ставят AWS EBS CSI для RWO block volumes
+→ если нужен RWX/shared filesystem, смотрят AWS EFS CSI
+
+GCP/GKE
+→ обычно GCE Persistent Disk CSI
+
+Azure/AKS
+→ Azure Disk CSI для block volumes
+→ Azure File CSI для shared filesystem
+
+OpenStack
+→ Cinder CSI
+
+VMware/vSphere
+→ vSphere CSI
+
+Bare metal / свои VM без cloud storage
+→ Longhorn, OpenEBS, Ceph/Rook или внешний NFS/Ceph
+
+Уже есть NFS
+→ NFS CSI может создавать/mount'ить PVC поверх NFS backend
+
+Нужен distributed storage внутри cluster
+→ часто смотрят Longhorn, OpenEBS или Rook/Ceph
+```
+
+Примеры `provisioner` names, которые потом встречаются в `StorageClass`:
+
+```text
+AWS EBS CSI              → ebs.csi.aws.com
+AWS EFS CSI              → efs.csi.aws.com
+GCE Persistent Disk CSI  → pd.csi.storage.gke.io
+Azure Disk CSI           → disk.csi.azure.com
+Azure File CSI           → file.csi.azure.com
+OpenStack Cinder CSI     → cinder.csi.openstack.org
+VMware vSphere CSI       → csi.vsphere.vmware.com
+NFS CSI                  → nfs.csi.k8s.io
+Ceph RBD CSI             → rbd.csi.ceph.com
+CephFS CSI               → cephfs.csi.ceph.com
+Longhorn CSI             → driver.longhorn.io
+```
+
+Главный практический вопрос:
+
+```text
+откуда физически будут браться bytes?
+```
+
+После этого выбирают integration:
+
+```text
+block volume
+→ обычно attach к Node
+→ filesystem mount в Pod
+→ часто RWO
+
+shared filesystem
+→ mount с разных Nodes
+→ может поддерживать RWX
+
+local storage
+→ физически привязан к конкретной Node
+→ Kubernetes не реплицирует bytes сам
+```
+
+CSI driver не обязан сам хранить данные. Часто он только говорит внешней системе:
+
+```text
+create volume
+attach volume to Node
+mount volume
+expand volume
+snapshot volume
+delete volume
+```
 
 ## 54. Attach / detach
 
 **Attach** — сделать attachable storage device доступным конкретной Node.
 
 **Detach** — убрать эту связь.
+
+Attach/detach orchestration выполняет attach/detach controller внутри `kube-controller-manager`, а конкретную операцию к storage backend делает volume plugin/CSI driver.
 
 Для network/cloud block storage:
 
@@ -2027,7 +2814,7 @@ storage backend
 Node sees block device
 ```
 
-Например conceptually:
+Например:
 
 ```text
 /dev/sdX
@@ -2241,7 +3028,18 @@ local disk
 
 Kubernetes не копирует их автоматически на Node B.
 
-## 60. Что происходит со storage при замене Pod на другую Node
+## 60. Storage и смена Node
+
+Базовая идея:
+
+```text
+Pod object disposable
+PVC object обычно остаётся тем же
+PV/backend storage остаётся тем же
+меняется только место, где workload пытается mount/use этот storage
+```
+
+Дальше поведение зависит от типа storage backend.
 
 ### Network filesystem
 
@@ -2253,27 +3051,45 @@ new Pod on Node B
 Node B mounts same remote filesystem
 ```
 
-Данные не переезжали.
+Данные физически не переезжают между Nodes. Они лежат в remote filesystem, а новая Node просто подключает тот же backend.
+
+Обычно это модель NFS/EFS/CephFS/других shared filesystem.
+
+Важно: если access mode/backend разрешает несколько Nodes, старый и новый Pod потенциально могут видеть одни и те же bytes. Корректность concurrent access — ответственность filesystem и приложения.
 
 ### Network block
 
 ```text
-unmount Node A
+old Pod on Node A stops
 ↓
-detach from Node A
+kubelet unmounts volume on Node A
 ↓
-attach to Node B
+attach/detach controller + CSI detach volume from Node A
 ↓
-mount Node B
+CSI attach same volume to Node B
 ↓
-new Pod
+kubelet mounts filesystem on Node B
+↓
+new Pod starts with same data
 ```
 
-Данные не копируются; меняется attachment того же storage resource.
+Данные не копируются. Меняется attachment одного и того же remote block volume.
+
+Обычно такой volume нельзя одновременно read/write mount'ить на нескольких Nodes как обычный filesystem. Поэтому важны detach/attach ordering, access mode и backend constraints.
 
 ### Local PV
 
+```text
+old Pod on worker-03
+↓
+local PV points to worker-03:/mnt/disks/ssd1
+↓
+new Pod also must be scheduled to worker-03
+```
+
 Pod не может быть произвольно перенесён на другую Node, потому что data существует только на конкретной машине.
+
+Если worker-03 умерла, Kubernetes не создаст копию local data на worker-07. Нужна application-level replication, backup/restore или storage system, которая сама реплицирует данные.
 
 ## 61. StatefulSet → PVC → PV → backend
 
@@ -2295,139 +3111,7 @@ volume A → copy → B → copy → C
 
 Data replication — responsibility database/message broker/distributed storage system.
 
-## 62. Нужно ли держать PostgreSQL в Kubernetes
-
-Правильный production вопрос:
-
-```text
-не "можно ли?"
-а "зачем именно Kubernetes улучшает failure/operations model этой БД?"
-```
-
-Практический default для одной критичной PostgreSQL instance без HA:
-
-```text
-managed PostgreSQL
-или
-выделенная VM/DB platform
-```
-
-а не Kubernetes только потому, что application уже в Kubernetes.
-
-Причины:
-
-```text
-Kubernetes не создаёт вторую копию данных
-добавляет CSI/PV/PVC/scheduler/kubelet/networking failure domains
-требует Kubernetes expertise для DB debugging
-host/kernel/storage tuning всё равно остаётся
-```
-
-### Когда DB в Kubernetes оправдана
-
-Если компания сознательно строит Kubernetes-based data platform и имеет:
-
-```text
-mature DB Operator
-proven storage
-backup/restore
-failure-domain design
-monitoring
-team expertise
-```
-
-тогда Kubernetes-hosted database может быть нормальным platform choice.
-
-### PostgreSQL HA cluster
-
-Если есть primary + standbys:
-
-```text
-primary    → its own PVC/PV
-standby-1  → its own PVC/PV
-standby-2  → its own PVC/PV
-```
-
-PostgreSQL replication/WAL реплицирует database state между instances.
-
-Kubernetes PV subsystem НЕ реплицирует PostgreSQL data между replicas.
-
-### Operator
-
-**Operator** — Kubernetes controller, содержащий application-specific operational logic.
-
-Для PostgreSQL Operator может понимать:
-
-```text
-primary/standby roles
-failover
-promotion
-replica recreation
-backup orchestration
-upgrade sequencing
-```
-
-StatefulSet знает generic Pod identity/storage lifecycle, но не database semantics.
-
-## 63. Node classes, Linux tuning и placement stateful workloads
-
-Containers используют host Linux kernel, поэтому требования database/Redis/RabbitMQ к kernel не исчезают.
-
-Node OS можно готовить через:
-
-```text
-Ansible
-cloud-init
-golden images / Packer
-Terraform + image pipeline
-```
-
-Полезное разделение:
-
-```text
-base_linux
-↓
-kubernetes_worker
-↓
-stateful_common
-↓
-postgres_specific / redis_specific / rabbit_specific
-```
-
-Пример Node labels:
-
-```text
-workload=general
-workload=postgres
-```
-
-И taint для dedicated Nodes:
-
-```text
-workload=postgres:NoSchedule
-```
-
-Workload использует:
-
-```text
-nodeSelector / nodeAffinity
-+
-toleration
-```
-
-чтобы scheduler размещал его только на подготовленных Nodes.
-
-Главная граница:
-
-```text
-Ansible/image pipeline
-→ конфигурирует Linux host
-
-Kubernetes scheduling constraints
-→ решают, какие Pods могут попасть на этот host
-```
-
-## 64. kube-scheduler
+## 62. kube-scheduler
 
 **kube-scheduler** — Control Plane component, выбирающий Node для Pod, которому Node ещё не назначена.
 
@@ -2461,7 +3145,9 @@ storage topology
 
 ### Scoring
 
-Подходящие Nodes получают scores, после чего выбирается предпочтительная.
+После filtering остаются feasible Nodes: на них Pod в принципе можно поставить.
+
+Scoring выбирает лучшую Node среди допустимых.
 
 ```text
 all Nodes
@@ -2471,17 +3157,58 @@ feasible Nodes
 chosen Node
 ```
 
+Scheduler plugins начисляют Nodes баллы по разным критериям, затем результаты нормализуются, умножаются на веса и суммируются.
+
+Упрощённо:
+
+```text
+Node score =
+  resources score
++ affinity/preference score
++ topology/spread score
++ image locality score
++ другие plugin scores
+```
+
+Примеры факторов:
+
+```text
+resource fit/shape
+→ насколько удачно Pod укладывается по CPU/memory requests
+
+preferred node affinity
+→ мягкие предпочтения пользователя, в отличие от hard nodeSelector/required affinity
+
+pod affinity / anti-affinity
+→ ближе или дальше от других Pods с нужными labels
+
+topology spread constraints
+→ распределить replicas по zones/nodes/racks более равномерно
+
+taints/tolerations
+→ hard filtering для NoSchedule, но некоторые эффекты могут влиять и на предпочтительность
+
+image locality
+→ Node, где image уже есть, может получить бонус
+```
+
+Filtering отвечает на вопрос: можно ли поставить Pod на Node.
+
+Scoring отвечает на вопрос: какая из допустимых Nodes лучше.
+
+Scoring не гарантирует идеальную глобальную оптимизацию cluster. Scheduler принимает решение для конкретного pending Pod на основе текущего API state и своей configuration.
+
 ### Scheduler не является Linux scheduler
 
 Он работает на cluster placement level.
 
 Он не делает continuous live migration уже запущенных Pods для балансировки.
 
-## 65. kube-controller-manager
+## 63. kube-controller-manager
 
 **kube-controller-manager** — Control Plane process, запускающий множество core Kubernetes controllers.
 
-Внутри conceptually находятся:
+Внутри по смыслу находятся:
 
 ```text
 Deployment controller
@@ -2491,16 +3218,39 @@ DaemonSet controller
 Job controller
 CronJob controller
 EndpointSlice controller
+Node controller
+PersistentVolume controller
+Attach/Detach controller
 ...
 ```
 
 Controller-manager обычно работает на уровне Kubernetes API objects, а не напрямую на уровне Linux processes.
 
-## 66. Controller / control loop
+## 64. Как работает controller
 
-**Controller** — логика, которая наблюдает relevant API state и при необходимости вносит изменения, чтобы система приблизилась к требуемому состоянию.
+**Controller** — логика, которая наблюдает нужные Kubernetes API objects и при необходимости вносит изменения, чтобы система приблизилась к desired state.
 
-Типичная implementation architecture:
+Это общая модель для многих Kubernetes controllers:
+
+```text
+Deployment controller
+ReplicaSet controller
+StatefulSet controller
+Job controller
+EndpointSlice controller
+...
+```
+
+Например ReplicaSet controller видит:
+
+```text
+ReplicaSet wants replicas=3
+matching Pods сейчас 2
+↓
+controller создаёт ещё один Pod object через API
+```
+
+Типичная внутренняя схема controller:
 
 ```text
 kube-apiserver
@@ -2518,13 +3268,15 @@ API write if needed
 
 ### Cache
 
-Local in-memory representation relevant API objects.
+Локальная in-memory копия нужных API objects, которую controller поддерживает через `LIST/WATCH`.
 
-Cache не source of truth и исчезает при process restart.
+Cache нужна, чтобы controller не перечитывал всё из API на каждое решение.
+
+Cache не source of truth. Источник истины — Kubernetes API/etcd. При restart process cache строится заново.
 
 ### Event
 
-Event означает:
+Event в этой схеме — сигнал от watch/cache:
 
 ```text
 "что-то изменилось; это состояние надо пересчитать"
@@ -2534,9 +3286,11 @@ Event означает:
 
 ### Work queue
 
-Внутренняя очередь keys/objects, которые нужно reconcile.
+Внутренняя очередь keys/objects, которые controller должен обработать.
 
-## 67. Watch и resourceVersion
+Обычно event не исполняется напрямую. Он кладёт key в work queue, а worker позже делает reconcile: заново читает текущее состояние и решает, нужно ли что-то менять.
+
+## 65. Watch и resourceVersion
 
 **watch** — Kubernetes API mechanism, позволяющий client получать поток изменений objects после определённой известной точки API state.
 
@@ -2568,7 +3322,7 @@ new WATCH
 
 Correctness controller не должна требовать идеальной вечной доставки каждого event.
 
-## 68. Reconciliation
+## 66. Reconciliation
 
 **Reconciliation** — процесс, в котором controller смотрит на текущее relevant desired/observed state и выполняет corrective action, если это нужно.
 
@@ -2616,13 +3370,13 @@ partial failure
 
 Reconciliation не является transaction; промежуточные состояния допустимы, если последующие loops способны их исправить.
 
-## 69. Leader election
+## 67. Leader election
 
-При HA может быть несколько экземпляров `kube-controller-manager` или `kube-scheduler`.
+В HA Control Plane может быть несколько экземпляров `kube-controller-manager` или `kube-scheduler`.
 
 Чтобы они не выполняли одну active controller/scheduler role одновременно, используется **leader election**.
 
-Conceptually:
+Схема:
 
 ```text
 controller-manager A → leader
@@ -2656,7 +3410,7 @@ kube-scheduler leader
 
 `kube-apiserver` может работать active-active; ему не нужен один глобальный leader для ordinary request handling.
 
-## 70. cloud-controller-manager
+## 68. cloud-controller-manager
 
 **cloud-controller-manager** — Control Plane process для controllers, которым нужна логика конкретного cloud provider.
 
@@ -2676,7 +3430,7 @@ real cloud resource
 
 Он не является application traffic proxy и не запускает containers.
 
-## 71. Как компоненты реально взаимодействуют
+## 69. Как компоненты реально взаимодействуют
 
 Главный архитектурный принцип:
 
@@ -2712,7 +3466,7 @@ persistent state
 coordination medium
 ```
 
-## 72. End-to-end: manifest → Linux process
+## 70. End-to-end: manifest → Linux process
 
 Применение Deployment:
 
@@ -2764,420 +3518,9 @@ controllers/other components observe again
 
 Kubernetes не «запускает container» одним действием; это серия state transitions и реакций независимых components.
 
-## 73. Helm
 
-**Helm** — отдельный client/tool поверх Kubernetes API для parameterized generation и lifecycle management наборов Kubernetes manifests.
 
-Helm не является Control Plane component.
-
-### Chart
-
-**Chart** — directory/package со структурой Helm application package.
-
-Типично:
-
-```text
-Chart.yaml
-values.yaml
-templates/
-```
-
-Chart сам не является Kubernetes object.
-
-### Templates
-
-`templates/` содержат text templates с Go-template expressions:
-
-```text
-{{ ... }}
-```
-
-До rendering это не обязательно valid Kubernetes manifest.
-
-### values.yaml
-
-Default input parameters Chart.
-
-Effective values формируются из defaults + overrides.
-
-### Release
-
-**Release** — конкретная Helm-managed installation Chart с определённым name, values, generated manifests и revision history.
-
-Helm revision ≠ Deployment revision.
-
-## 74. Helm commands
-
-### install
-
-```bash
-helm install RELEASE ./chart
-```
-
-```text
-Chart + values
-↓
-render manifests
-↓
-Kubernetes API
-↓
-Release revision 1
-```
-
-### upgrade
-
-```bash
-helm upgrade RELEASE ./chart
-```
-
-Рендерит новый desired set manifests и применяет изменения через API.
-
-Kubernetes controllers выполняют actual workload rollouts.
-
-### rollback
-
-```bash
-helm rollback RELEASE REVISION
-```
-
-Старая Release configuration применяется заново как новая текущая revision.
-
-Это не возвращает физический cluster назад во времени.
-
-### uninstall
-
-```bash
-helm uninstall RELEASE
-```
-
-Удаляет Helm-managed resources согласно lifecycle/policies; persistent/external resources могут сохраняться в зависимости от configuration.
-
-## 75. Helm validation и dry run
-
-### helm lint
-
-```bash
-helm lint ./my-chart
-```
-
-Проверяет Chart structure/templates/schema и ловит часть ошибок до изменения cluster.
-
-### helm template
-
-```bash
-helm template RELEASE ./my-chart -f values.yaml
-```
-
-Локально рендерит окончательные Kubernetes manifests и печатает их, ничего не устанавливая.
-
-Это лучший ответ на вопрос:
-
-```text
-"во что именно сейчас собираются мои templates?"
-```
-
-### dry-run
-
-```bash
-helm install RELEASE ./chart --dry-run --debug
-helm upgrade RELEASE ./chart --dry-run
-```
-
-Позволяет прогнать install/upgrade-like rendering/validation без обычного deployment.
-
-### values.schema.json
-
-Chart может содержать JSON Schema для validation final merged values.
-
-### Важная лестница
-
-```text
-valid template syntax
-≠ valid YAML
-≠ valid Kubernetes resource
-≠ admissible API request
-≠ running workload
-≠ functioning application
-```
-
-### Atomicity
-
-Helm install/upgrade набора разных Kubernetes objects не является универсальной ACID transaction.
-
-Некоторые resources могут уже быть приняты API до ошибки на следующем.
-
-`--atomic` добавляет cleanup/rollback behavior и `--wait`, но не превращает operation в настоящую database transaction: внешние side effects/hook effects могли уже произойти.
-
-## 76. Ownership/control relationships
-
-```text
-Deployment → ReplicaSet → Pod
-StatefulSet → Pod
-DaemonSet → Pod
-CronJob → Job → Pod
-```
-
-Это lifecycle/controller relationships.
-
-## 77. Non-ownership relationships
-
-```text
-Service → Pods
-```
-
-через selector + EndpointSlice backend membership.
-
-```text
-Ingress → Service
-```
-
-через explicit backend reference.
-
-```text
-Pod → ConfigMap / Secret
-```
-
-через configuration references.
-
-```text
-Pod → PVC → PV → storage backend
-```
-
-через storage references/binding.
-
-```text
-Pod → Node
-```
-
-через scheduler assignment.
-
-Один Pod одновременно может быть:
-
-```text
-owned by ReplicaSet
-selected by Service
-referencing ConfigMap
-referencing PVC
-assigned to Node
-```
-
-Это независимые типы отношений.
-
-## 78. Control Plane responsibility map
-
-```text
-kube-apiserver
-→ API boundary, authn/authz, validation/admission, API state access
-
-etcd
-→ persistent distributed backing store
-
-kube-controller-manager
-→ core reconciliation/controllers
-
-kube-scheduler
-→ Pod → Node placement
-
-cloud-controller-manager
-→ cloud-specific reconciliation
-```
-
-Node side:
-
-```text
-kubelet
-→ local Pod execution/reconciliation
-
-container runtime
-→ container lifecycle machinery
-
-CNI/network implementation
-→ Pod network
-
-kube-proxy/eBPF service implementation
-→ Service dataplane
-```
-
-## 79. Networking responsibility map
-
-```text
-physical/cloud underlay
-→ Node-to-Node real connectivity
-
-CNI / Pod network
-→ Pod IP connectivity across Nodes
-
-Service dataplane
-→ Service VIP/NodePort → backend Pod IP
-
-CoreDNS
-→ Service discovery names → Service/backend identities
-
-LoadBalancer implementation
-→ external IP/reachability into cluster
-
-Ingress/Gateway proxy
-→ HTTP/TLS L7 routing
-```
-
-## 80. Storage responsibility map
-
-```text
-PVC
-→ request
-
-StorageClass
-→ class/how to provision
-
-CSI/storage integration
-→ bridge between Kubernetes and storage system
-
-PV
-→ representation of concrete allocated storage resource
-
-storage backend
-→ actual bytes
-
-attach
-→ make device available to Node
-
-mount
-→ expose filesystem/resource in Linux mount tree
-```
-
-## 81. Stateful systems responsibility map
-
-```text
-Kubernetes
-→ process lifecycle, placement, service identity, API coordination
-
-storage backend
-→ persistence/durability of physical bytes
-
-PostgreSQL/Kafka/RabbitMQ/etc.
-→ application-level replication, quorum, data semantics
-
-Operator
-→ application-specific operational orchestration
-
-Linux kernel
-→ CPU, memory, I/O, networking behavior
-```
-
-## 82. Object ≠ process
-
-```text
-Pod object
-≠ Linux process
-
-Service object
-≠ listening process
-
-PV object
-≠ disk/filesystem itself
-```
-
-## 83. Manifest ≠ object ≠ physical reality
-
-```text
-YAML manifest
-↓ client/API
-Kubernetes object
-↓ controllers/node components
-physical state
-```
-
-Эти уровни могут временно расходиться.
-
-## 84. Service IP ≠ Pod IP ≠ Node IP
-
-```text
-Node IP
-→ real underlay host address
-
-Pod IP
-→ Pod network address
-
-ClusterIP
-→ virtual Service address
-```
-
-## 85. ClusterIP routing ≠ CNI routing
-
-```text
-ClusterIP → backend Pod IP
-```
-
-делает Service dataplane.
-
-```text
-backend Pod IP → actual remote Node/Pod
-```
-
-делает Pod network/CNI implementation.
-
-## 86. attach ≠ mount
-
-```text
-attach
-→ Node получила доступ к storage device
-
-mount
-→ filesystem/resource появился по path
-```
-
-## 87. RWO ≠ один Pod
-
-```text
-RWO = одна Node
-RWOP = один Pod
-```
-
-## 88. StatefulSet ≠ database HA
-
-StatefulSet даёт:
-
-```text
-stable identities
-stable PVC relationships
-ordered lifecycle options
-```
-
-Он не знает:
-
-```text
-кто PostgreSQL primary
-как Kafka elects leader
-как Cassandra реплицирует partitions
-```
-
-## 89. Kubernetes replication ≠ data replication
-
-```text
-ReplicaSet replicas=3
-```
-
-означает три Pods/process instances.
-
-Это не означает, что их internal application data автоматически реплицируется.
-
-## 90. Reconciliation ≠ transaction
-
-Kubernetes допускает промежуточные states.
-
-Controller logic должна быть способна после restart/failure снова посмотреть на current state и продолжить convergence.
-
-## 91. kube-proxy ≠ userspace proxy на каждом packet
-
-В современных классических datapaths kube-proxy в основном программирует kernel networking state; packet forwarding затем делает Linux kernel.
-
-## 92. CNI ≠ конкретно VXLAN
-
-CNI — interface/ecosystem integration point.
-
-VXLAN — один конкретный network mechanism, который может использовать network implementation.
-
-## 93. `kubectl apply Deployment`
+## 71. `kubectl apply Deployment`
 
 ```text
 manifest
@@ -3207,7 +3550,7 @@ runtime
 Linux process
 ```
 
-## 94. Pod A → Service → Pod B на другой Node
+## 72. Pod A → Service → Pod B на другой Node
 
 При Flannel VXLAN + iptables-like Service dataplane:
 
@@ -3232,7 +3575,7 @@ remote Node decapsulation
 Pod B 10.244.2.9:8080
 ```
 
-## 95. Browser → application Pod
+## 73. Browser → application Pod
 
 ```text
 Browser
@@ -3260,7 +3603,7 @@ application Pod
 application process socket
 ```
 
-## 96. StatefulSet Pod → persistent bytes
+## 74. StatefulSet Pod → persistent bytes
 
 ```text
 StatefulSet
@@ -3282,53 +3625,4 @@ mount
 container path
 ↓
 application filesystem syscalls
-```
-
-## 97. HA Control Plane bootstrap
-
-Stacked etcd:
-
-```text
-cp-1: kubeadm init
-↓
-kubelet starts static Pods
-↓
-apiserver/controllers/scheduler/etcd-1
-
-cp-2: kubeadm join --control-plane
-↓
-static control-plane Pods + etcd-2
-
-cp-3: kubeadm join --control-plane
-↓
-static control-plane Pods + etcd-3
-
-etcd members
-↓ Raft
-leader + quorum
-```
-
-## 98. Финальная mental model
-
-Kubernetes удобнее всего держать в голове как набор независимых feedback loops вокруг общего API state.
-
-```text
-                    Kubernetes API
-                         │
-       ┌─────────────────┼─────────────────┐
-       │                 │                 │
- controllers         scheduler          kubelet
-       │                 │                 │
-create/update         assign Node      execute locally
-API objects                                │
-       │                                   ▼
-       │                               runtime + Linux
-       │
-       ├──────── networking controllers/agents
-       │                    ↓
-       │      routes/VXLAN/eBPF/netfilter
-       │
-       └──────── storage controllers/drivers
-                          ↓
-                 volumes/mounts/backend
 ```

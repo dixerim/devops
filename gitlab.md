@@ -45,8 +45,6 @@ Pipeline
 
 **GitLab CI/CD — это система, которая по событиям Git создаёт pipeline, формирует граф jobs, назначает jobs на Runner'ы, передаёт им контекст и хранит результаты выполнения.**
 
-
-
 ## 2. Pipeline → Stage → Job
 
 ### Pipeline
@@ -478,6 +476,37 @@ key
 → почти нет reuse
 ```
 
+Пример для Go modules:
+
+```yaml
+variables:
+  GOMODCACHE: "$CI_PROJECT_DIR/.cache/go-mod"
+
+test:
+  image: golang:1.26
+  cache:
+    key:
+      files:
+        - go.sum
+    paths:
+      - .cache/go-mod/
+  script:
+    - go test ./...
+```
+
+Здесь `go.sum` участвует в cache key:
+
+```text
+go.sum не изменился
+→ переиспользуем тот же Go module cache
+
+go.sum изменился
+→ key меняется
+→ GitLab создаёт/ищет другой cache
+```
+
+Это лучше, чем key на каждый commit, потому что dependency cache обычно должен инвалидироваться при изменении dependencies, а не при любом изменении source code.
+
 ## 6. Управление выполнением jobs
 
 ### `rules`
@@ -583,6 +612,8 @@ build-b ──────────────────→ test-b
 
 Это DAG-модель pipeline.
 
+**DAG (Directed Acyclic Graph, направленный ациклический граф)** → jobs образуют граф зависимостей: стрелка показывает, какая job должна завершиться раньше, а циклов быть не может.
+
 ### `dependencies`
 
 `dependencies` исторически управляет тем, **из каких предыдущих jobs скачивать artifacts**.
@@ -670,8 +701,6 @@ CI_REGISTRY_PASSWORD
 
 ### Docker-in-Docker и Docker socket
 
-Эту тему мы грызли отдельно и глубоко.
-
 #### Docker socket binding
 
 Схема:
@@ -750,7 +779,7 @@ host dockerd
 
 #### Сильная boundary — отдельная VM/kernel
 
-Для untrusted/privileged CI workloads мы пришли к идее:
+Для untrusted/privileged CI workloads более сильная модель изоляции:
 
 ```text
 physical host
@@ -1138,7 +1167,7 @@ Environment STOPPED
 
 Ключевой момент:
 
-**нам не обязательно создавать отдельный pipeline по событию `MR closed` через какую-то переменную состояния.**
+**не обязательно создавать отдельный pipeline по событию `MR closed` через переменную состояния.**
 
 Схема:
 
@@ -1396,13 +1425,13 @@ devops/ci-templates
     └── go-build.yml
 ```
 
-Для простой внутренней инфраструктуры мы решили, что обычный `Internal ci-templates project` вполне может быть достаточен.
+Для простой внутренней инфраструктуры обычного `Internal ci-templates project` часто достаточно.
 
 Components становятся интереснее, когда нужен формализованный CI API/catalog/version lifecycle.
 
 ## 10. Debugging GitLab CI/CD
 
-Наш порядок атаки:
+Порядок диагностики:
 
 ```text
 1. Pipeline graph
