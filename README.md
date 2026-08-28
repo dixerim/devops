@@ -1,3 +1,7 @@
+---
+layout: default
+---
+
 ![Project banner](./title.jpg)
 
 # DevOps notes
