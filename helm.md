@@ -34,7 +34,7 @@ Chart сам не является Kubernetes object.
 `templates/` содержат text templates с Go-template expressions:
 
 ```text
-{{ ... }}
+{% raw %}{{ ... }}{% endraw %}
 ```
 
 До rendering это не обязательно valid Kubernetes manifest.
@@ -294,6 +294,7 @@ resources:
 ### templates/_helpers.tpl
 
 ```text
+{% raw %}
 {{- define "accounts.fullname" -}}
 {{- printf "%s-%s" .Release.Name .Chart.Name | trunc 63 | trimSuffix "-" -}}
 {{- end -}}
@@ -302,6 +303,7 @@ resources:
 app.kubernetes.io/name: {{ .Chart.Name }}
 app.kubernetes.io/instance: {{ .Release.Name }}
 {{- end -}}
+{% endraw %}
 ```
 
 `_helpers.tpl` не создаёт Kubernetes object. Это набор маленьких template-функций, которые потом вызываются из других templates.
@@ -309,6 +311,7 @@ app.kubernetes.io/instance: {{ .Release.Name }}
 ### templates/deployment.yaml
 
 ```yaml
+{% raw %}
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -334,11 +337,13 @@ spec:
             - containerPort: {{ .Values.containerPort }}
           resources:
             {{- toYaml .Values.resources | nindent 12 }}
+{% endraw %}
 ```
 
 ### templates/service.yaml
 
 ```yaml
+{% raw %}
 apiVersion: v1
 kind: Service
 metadata:
@@ -354,11 +359,13 @@ spec:
     - name: http
       port: {{ .Values.service.port }}
       targetPort: {{ .Values.containerPort }}
+{% endraw %}
 ```
 
 ### templates/ingress.yaml
 
 ```yaml
+{% raw %}
 {{- if .Values.ingress.enabled }}
 apiVersion: networking.k8s.io/v1
 kind: Ingress
@@ -378,6 +385,7 @@ spec:
                 port:
                   number: {{ .Values.service.port }}
 {{- end }}
+{% endraw %}
 ```
 
 Ingress template использует `ingress.host`, `ingress.path` и `service.port` из `values.yaml`.

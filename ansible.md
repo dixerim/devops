@@ -352,7 +352,7 @@ vars:
 Использование:
 
 ```yaml
-"{{ app_port }}"
+{% raw %}"{{ app_port }}"{% endraw %}
 ```
 
 Variables позволяют использовать один playbook для разных hosts и окружений.
@@ -381,7 +381,7 @@ Facts можно воспринимать как автоматически по
 Пример:
 
 ```jinja2
-listen_port = {{ app_port }}
+{% raw %}listen_port = {{ app_port }}{% endraw %}
 ```
 
 Из одного template для разных hosts могут получаться разные конфигурационные файлы.
@@ -772,10 +772,11 @@ PostgreSQL в Debian/Ubuntu: кластер называется `main`, а ко
 Чтобы версия `postgresql_version` не зависела от версии PostgreSQL в базовом
 репозитории ОС, роль сначала подключает официальный PostgreSQL APT Repository
 (PGDG). Он поддерживает несколько версий PostgreSQL одновременно, поэтому далее
-устанавливается именно пакет `postgresql-{{ postgresql_version }}`, а не
+устанавливается именно пакет `{% raw %}postgresql-{{ postgresql_version }}{% endraw %}`, а не
 изменяемый meta-пакет `postgresql`.
 
 ```yaml
+{% raw %}
 - name: Install PGDG repository prerequisites
   ansible.builtin.apt:
     name:
@@ -821,6 +822,7 @@ PostgreSQL в Debian/Ubuntu: кластер называется `main`, а ко
       - "postgresql-{{ postgresql_version }}"
       - "postgresql-contrib-{{ postgresql_version }}"
     state: present
+{% endraw %}
 ```
 
 `ansible_distribution_release` берётся из facts: например, на Ubuntu 24.04 это
@@ -832,6 +834,7 @@ PostgreSQL в Debian/Ubuntu: кластер называется `main`, а ко
 Остальная часть `roles/postgresql/tasks/main.yml`:
 
 ```yaml
+{% raw %}
 - name: Ensure PostgreSQL configuration directory exists
   ansible.builtin.file:
     path: "/etc/postgresql/{{ postgresql_version }}/main/conf.d"
@@ -863,6 +866,7 @@ PostgreSQL в Debian/Ubuntu: кластер называется `main`, а ко
     name: postgresql
     state: started
     enabled: true
+{% endraw %}
 ```
 
 Роль меняет только выделенный файл `conf.d/20-ansible.conf`, а не полностью
@@ -876,6 +880,7 @@ PostgreSQL в Debian/Ubuntu: кластер называется `main`, а ко
 Содержимое `roles/postgresql/templates/20-ansible.conf.j2`:
 
 ```conf
+{% raw %}
 # Managed by Ansible. Do not edit manually.
 
 # Слушаем конкретный приватный адрес, а не все интерфейсы ('*').
@@ -894,6 +899,7 @@ logging_collector = on
 log_line_prefix = '%m [%p] user=%u,db=%d,app=%a,client=%h '
 log_timezone = 'UTC'
 timezone = 'UTC'
+{% endraw %}
 ```
 
 `listen_addresses` ограничивает интерфейс, на котором PostgreSQL принимает
@@ -907,6 +913,7 @@ groups или правилами firewall. TLS стоит включать от�
 Содержимое `roles/postgresql/templates/pg_hba.conf.j2`:
 
 ```conf
+{% raw %}
 # Managed by Ansible. Do not edit manually.
 
 # Локальные подключения ОС-пользователя postgres.
@@ -922,6 +929,7 @@ host    all             all             {{ cidr }}              scram-sha-256
 
 # Другие подключения не разрешены: PostgreSQL использует первое совпавшее правило,
 # а при отсутствии совпадения отклоняет соединение.
+{% endraw %}
 ```
 
 Правила `pg_hba.conf` обрабатываются сверху вниз, поэтому широкое разрешающее
