@@ -3,60 +3,79 @@
 <head>
     <meta charset="utf-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
-
+    <meta name="description" content="{{ page.description | default: site.description }}">
     <title>{{ page.title | default: site.title }}</title>
-
     <style>
-        body {
-            margin: 0;
-            background: #0d1117;
-            color: #c9d1d9;
-            font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
-            line-height: 1.6;
-        }
-
-        main {
-            max-width: 980px;
-            margin: 0 auto;
-            padding: 40px 24px;
-        }
-
-        h1, h2, h3, h4 {
-            color: #f0f6fc;
-        }
-
-        a {
-            color: #58a6ff;
-        }
-
-        code {
-            background: #161b22;
-            padding: 2px 6px;
-            border-radius: 6px;
-        }
-
-        pre {
-            background: #161b22;
-            border: 1px solid #30363d;
-            padding: 16px;
-            overflow-x: auto;
-            border-radius: 6px;
-        }
-
-        img {
-            max-width: 100%;
-        }
-
-        hr {
-            border: 0;
-            border-top: 1px solid #30363d;
-        }
+        :root { color-scheme: dark; --background: #0b1020; --surface: #121a2d; --surface-raised: #18233a; --border: #2a3856; --text: #dce5f5; --muted: #97a7c3; --heading: #f5f8ff; --accent: #74c7ff; --accent-strong: #a8dcff; --code: #0a1120; --quote: #1c3151; --shadow: 0 18px 48px rgb(0 0 0 / 22%); }
+        * { box-sizing: border-box; }
+        html { scroll-behavior: smooth; }
+        body { min-width: 320px; margin: 0; background: radial-gradient(circle at top left, #1a3155 0, transparent 34rem), var(--background); color: var(--text); font-family: Inter, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; font-size: 16px; line-height: 1.72; text-rendering: optimizeLegibility; }
+        ::selection { background: #265b8d; color: #fff; }
+        .skip-link { position: fixed; z-index: 10; top: 12px; left: 12px; padding: 8px 12px; transform: translateY(-160%); border-radius: 8px; background: var(--accent); color: #07101e; font-weight: 700; transition: transform .15s ease; }
+        .skip-link:focus { transform: translateY(0); }
+        .site-header { position: sticky; z-index: 5; top: 0; border-bottom: 1px solid rgb(148 173 211 / 17%); background: rgb(11 16 32 / 86%); backdrop-filter: blur(16px); }
+        .header-inner, .page-shell, .footer-inner { width: min(100% - 40px, 1120px); margin: 0 auto; }
+        .header-inner { display: flex; align-items: center; justify-content: space-between; gap: 24px; min-height: 64px; }
+        .brand { flex: 0 0 auto; color: var(--heading); font-size: 1rem; font-weight: 760; letter-spacing: -.02em; text-decoration: none; }
+        .brand-mark { color: var(--accent); }
+        .site-nav { display: flex; align-items: center; gap: 3px; overflow-x: auto; scrollbar-width: none; }
+        .site-nav::-webkit-scrollbar { display: none; }
+        .site-nav a { padding: 5px 8px; border-radius: 6px; color: var(--muted); font-size: .86rem; font-weight: 600; text-decoration: none; white-space: nowrap; }
+        .site-nav a:hover, .site-nav a:focus-visible { background: rgb(116 199 255 / 12%); color: var(--accent-strong); }
+        .page-shell { padding: 54px 0 72px; }
+        article { padding: clamp(24px, 5vw, 52px); border: 1px solid var(--border); border-radius: 16px; background: linear-gradient(145deg, rgb(24 35 58 / 92%), rgb(18 26 45 / 96%)); box-shadow: var(--shadow); }
+        h1, h2, h3, h4 { color: var(--heading); line-height: 1.25; letter-spacing: -.025em; }
+        h1 { margin: 0 0 1.35rem; font-size: clamp(2.05rem, 5vw, 3.25rem); }
+        h2 { margin: 3.25rem 0 1.2rem; padding-bottom: .52rem; border-bottom: 1px solid var(--border); font-size: clamp(1.45rem, 3vw, 2rem); }
+        h3 { margin: 2.25rem 0 .85rem; font-size: 1.3rem; }
+        h4 { margin: 1.6rem 0 .65rem; font-size: 1.06rem; }
+        p, ul, ol, blockquote, pre, table { margin: 0 0 1.25rem; }
+        ul, ol { padding-left: 1.4rem; }
+        li + li { margin-top: .28rem; }
+        a { color: var(--accent); text-decoration-color: rgb(116 199 255 / 46%); text-underline-offset: 2px; }
+        a:hover { color: var(--accent-strong); text-decoration-color: currentcolor; }
+        code { padding: .13em .38em; border: 1px solid rgb(148 173 211 / 16%); border-radius: 5px; background: rgb(6 13 27 / 54%); color: #d6ecff; font-family: "SFMono-Regular", Consolas, "Liberation Mono", monospace; font-size: .88em; }
+        .highlight { margin: 0 0 1.25rem; }
+        pre { margin: 0; padding: 18px 20px; overflow-x: auto; border: 1px solid #2c3b58; border-radius: 10px; background: var(--code); color: #d4e3f8; box-shadow: inset 0 1px 0 rgb(255 255 255 / 3%); line-height: 1.55; tab-size: 2; }
+        /* Rouge renders fenced blocks as pre > code. Reset inline-code styles;
+           otherwise the left padding shifts only the first line of a block. */
+        pre code { display: block; padding: 0; border: 0; border-radius: 0; background: transparent; color: inherit; font-size: .9rem; line-height: inherit; }
+        .highlight .c, .highlight .c1, .highlight .cm, .highlight .cp { color: #7790af; }
+        .highlight .k, .highlight .kd, .highlight .kn, .highlight .nt { color: #caa6ff; }
+        .highlight .na, .highlight .nv, .highlight .py { color: #8dd5ff; }
+        .highlight .s, .highlight .s1, .highlight .s2, .highlight .si { color: #bde58b; }
+        .highlight .mi, .highlight .mf, .highlight .m { color: #ffc777; }
+        .highlight .o, .highlight .p, .highlight .pi { color: #b9c9e0; }
+        blockquote { padding: .15rem 1.1rem; border-left: 3px solid var(--accent); border-radius: 0 8px 8px 0; background: linear-gradient(90deg, var(--quote), transparent); color: #bdcbe1; }
+        blockquote > :last-child { margin-bottom: 0; }
+        table { display: block; width: max-content; max-width: 100%; overflow-x: auto; border-collapse: collapse; }
+        th, td { padding: .6rem .8rem; border: 1px solid var(--border); text-align: left; }
+        th { background: var(--surface-raised); color: var(--heading); }
+        tr:nth-child(even) { background: rgb(255 255 255 / 2%); }
+        img { display: block; max-width: 100%; height: auto; margin: 1.5rem auto; border: 1px solid var(--border); border-radius: 10px; }
+        hr { height: 1px; margin: 2.5rem 0; border: 0; background: var(--border); }
+        .site-footer { padding: 0 0 36px; color: var(--muted); font-size: .88rem; }
+        .footer-inner { display: flex; justify-content: space-between; gap: 16px; padding-top: 20px; border-top: 1px solid rgb(148 173 211 / 16%); }
+        @media (max-width: 720px) { .header-inner, .page-shell, .footer-inner { width: min(100% - 28px, 1120px); } .header-inner { align-items: flex-start; flex-direction: column; gap: 5px; padding: 12px 0 10px; } .site-nav { width: 100%; } .page-shell { padding: 26px 0 42px; } article { padding: 22px 18px; border-radius: 12px; } pre { padding: 14px; border-radius: 8px; } .footer-inner { align-items: flex-start; flex-direction: column; } }
     </style>
 </head>
-
 <body>
-<main>
-    {{ content }}
-</main>
+<a class="skip-link" href="#content">К содержимому</a>
+<header class="site-header">
+    <div class="header-inner">
+        <a class="brand" href="{{ '/' | relative_url }}"><span class="brand-mark">&gt;_</span> DevOps Notes</a>
+        <nav class="site-nav" aria-label="Разделы сайта">
+            <a href="{{ '/linux.html' | relative_url }}">Linux</a>
+            <a href="{{ '/network.html' | relative_url }}">Network</a>
+            <a href="{{ '/docker.html' | relative_url }}">Docker</a>
+            <a href="{{ '/kubernetes.html' | relative_url }}">Kubernetes</a>
+            <a href="{{ '/helm.html' | relative_url }}">Helm</a>
+            <a href="{{ '/ansible.html' | relative_url }}">Ansible</a>
+            <a href="{{ '/gitlab.html' | relative_url }}">GitLab CI/CD</a>
+        </nav>
+    </div>
+</header>
+<main id="content" class="page-shell"><article>{{ content }}</article></main>
+<footer class="site-footer"><div class="footer-inner"><span>DevOps Notes</span><span>{{ site.description }}</span></div></footer>
 </body>
 </html>
