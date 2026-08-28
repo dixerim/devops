@@ -18,12 +18,15 @@
         .header-inner { display: flex; align-items: center; justify-content: space-between; gap: 24px; min-height: 64px; }
         .brand { flex: 0 0 auto; color: var(--heading); font-size: 1rem; font-weight: 760; letter-spacing: -.02em; text-decoration: none; }
         .brand-mark { color: var(--accent); }
-        .site-nav { display: flex; align-items: center; gap: 3px; overflow-x: auto; scrollbar-width: none; }
-        .site-nav::-webkit-scrollbar { display: none; }
-        .site-nav a { padding: 5px 8px; border-radius: 6px; color: var(--muted); font-size: .86rem; font-weight: 600; text-decoration: none; white-space: nowrap; }
-        .site-nav a:hover, .site-nav a:focus-visible { background: rgb(116 199 255 / 12%); color: var(--accent-strong); }
+        .topics { position: relative; }
+        .topics summary { padding: 6px 10px; border: 1px solid var(--border); border-radius: 7px; color: var(--muted); cursor: pointer; font-size: .86rem; font-weight: 650; list-style: none; user-select: none; }
+        .topics summary::-webkit-details-marker { display: none; }
+        .topics summary::after { margin-left: 8px; content: "⌄"; }
+        .topics[open] summary { border-color: rgb(116 199 255 / 45%); background: rgb(116 199 255 / 10%); color: var(--accent-strong); }
+        .topic-menu { position: absolute; top: calc(100% + 9px); right: 0; width: min(270px, calc(100vw - 28px)); padding: 7px; border: 1px solid var(--border); border-radius: 9px; background: #121a2d; box-shadow: var(--shadow); }
+        .topic-menu a { display: block; padding: 7px 9px; border-radius: 5px; color: var(--muted); font-size: .9rem; font-weight: 600; text-decoration: none; }
+        .topic-menu a:hover, .topic-menu a:focus-visible { background: rgb(116 199 255 / 12%); color: var(--accent-strong); }
         .page-shell { padding: 54px 0 72px; }
-        article { padding: clamp(24px, 5vw, 52px); border: 1px solid var(--border); border-radius: 16px; background: linear-gradient(145deg, rgb(24 35 58 / 92%), rgb(18 26 45 / 96%)); box-shadow: var(--shadow); }
         h1, h2, h3, h4 { color: var(--heading); line-height: 1.25; letter-spacing: -.025em; }
         h1 { margin: 0 0 1.35rem; font-size: clamp(2.05rem, 5vw, 3.25rem); }
         h2 { margin: 3.25rem 0 1.2rem; padding-bottom: .52rem; border-bottom: 1px solid var(--border); font-size: clamp(1.45rem, 3vw, 2rem); }
@@ -56,7 +59,7 @@
         hr { height: 1px; margin: 2.5rem 0; border: 0; background: var(--border); }
         .site-footer { padding: 0 0 36px; color: var(--muted); font-size: .88rem; }
         .footer-inner { display: flex; justify-content: space-between; gap: 16px; padding-top: 20px; border-top: 1px solid rgb(148 173 211 / 16%); }
-        @media (max-width: 720px) { .header-inner, .page-shell, .footer-inner { width: min(100% - 28px, 1120px); } .header-inner { align-items: flex-start; flex-direction: column; gap: 5px; padding: 12px 0 10px; } .site-nav { width: 100%; } .page-shell { padding: 26px 0 42px; } article { padding: 22px 18px; border-radius: 12px; } pre { padding: 14px; border-radius: 8px; } .footer-inner { align-items: flex-start; flex-direction: column; } }
+        @media (max-width: 720px) { .header-inner, .page-shell, .footer-inner { width: min(100% - 28px, 1120px); } .header-inner { min-height: 56px; gap: 12px; } .page-shell { padding: 26px 0 42px; } pre { padding: 14px; border-radius: 8px; } .footer-inner { align-items: flex-start; flex-direction: column; } }
     </style>
 </head>
 <body>
@@ -64,7 +67,9 @@
 <header class="site-header">
     <div class="header-inner">
         <a class="brand" href="{{ '/' | relative_url }}"><span class="brand-mark">&gt;_</span> DevOps Notes</a>
-        <nav class="site-nav" aria-label="Разделы сайта">
+        <details class="topics">
+            <summary>Темы</summary>
+            <nav class="topic-menu" aria-label="Разделы сайта">
             <a href="{{ '/linux.html' | relative_url }}">Linux</a>
             <a href="{{ '/network.html' | relative_url }}">Network</a>
             <a href="{{ '/docker.html' | relative_url }}">Docker</a>
@@ -72,10 +77,11 @@
             <a href="{{ '/helm.html' | relative_url }}">Helm</a>
             <a href="{{ '/ansible.html' | relative_url }}">Ansible</a>
             <a href="{{ '/gitlab.html' | relative_url }}">GitLab CI/CD</a>
-        </nav>
+            </nav>
+        </details>
     </div>
 </header>
-<main id="content" class="page-shell"><article>{{ content }}</article></main>
+<main id="content" class="page-shell">{{ content }}</main>
 <footer class="site-footer"><div class="footer-inner"><span>DevOps Notes</span><span>{{ site.description }}</span></div></footer>
 </body>
 </html>

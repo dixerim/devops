@@ -230,36 +230,68 @@ execve() → новая программа в старом PID
 которое сначала становится pending, а потом доставляется конкретному `task_struct`
 перед возвратом этого task в userspace.
 
-```mermaid
-flowchart TD
-    A["SIGTERM generated"] --> B{"Как адресован сигнал?"}
+```text
+SIGTERM generated
+        │
+        ▼
+Как адресован сигнал?
+        │
+        ├── kill(pid, SIGTERM)
+        │       │
+        │       ▼
+        │   Process-directed signal
+        │       │
+        │       ▼
+        │   shared pending: thread group / signal_struct
+        │       │
+        │       ▼
+        │   Kernel выбирает один task, у которого SIGTERM не blocked
+        │
+        └── tgkill(tgid, tid, SIGTERM) / pthread_kill(thread, SIGTERM)
+                │
+                ▼
+            Thread-directed signal
+                │
+                ▼
+            private pending: конкретный task_struct
+                │
+                ▼
+            Target task проверяется перед возвратом в userspace
 
-    B -->|"kill(pid, SIGTERM)"| C["Process-directed signal"]
-    C --> D["Кладётся в shared pending<br/>thread group / signal_struct"]
-    D --> E["Kernel выбирает один подходящий task<br/>у которого SIGTERM не blocked"]
-
-    B -->|"tgkill(tgid, tid, SIGTERM)<br/>pthread_kill(thread, SIGTERM)"| F["Thread-directed signal"]
-    F --> G["Кладётся в private pending<br/>конкретного task_struct"]
-    G --> H["Target task будет проверен<br/>перед возвратом в userspace"]
-
-    E --> I["Delivery в конкретный task"]
-    H --> I
-
-    I --> J{"Disposition для SIGTERM<br/>в shared sighand_struct"}
-
-    J -->|"handler установлен"| K["Kernel строит signal frame<br/>на stack выбранного task"]
-    K --> L["Меняет userspace registers:<br/>следующая инструкция = handler"]
-    L --> M["Task выполняет handler<br/>как обычный userspace-код"]
-    M --> N{"Что сделал handler?"}
-    N -->|"return"| O["Task продолжает выполнение<br/>с места прерывания"]
-    N -->|"pthread_exit()"| P["Завершается текущий task/thread"]
-    N -->|"exit() / exit_group()"| Q["Завершается вся thread group"]
-
-    J -->|"default action = terminate"| R["Handler не запускается"]
-    R --> S["Kernel инициирует group exit"]
-    S --> T["Завершается вся thread group"]
-
-    J -->|"ignored"| U["signal discarded"]
+Target task выбрана
+        │
+        ▼
+Delivery в Target task
+        │
+        ▼
+Disposition для SIGTERM в shared sighand_struct
+        │
+        ├── handler установлен
+        │       │
+        │       ▼
+        │   Kernel строит signal frame на stack выбранного task
+        │       │
+        │       ▼
+        │   Меняет userspace registers: следующая инструкция = handler
+        │       │
+        │       ▼
+        │   Task выполняет handler как обычный userspace-код
+        │       │
+        │       ▼
+        │   Что сделал handler?
+        │       ├── return              → task продолжает выполнение с места прерывания
+        │       ├── pthread_exit()      → завершается текущий task/thread
+        │       └── exit()/exit_group() → завершается вся thread group
+        │
+        ├── default action = terminate
+        │       │
+        │       ▼
+        │   Handler не запускается → kernel инициирует group exit
+        │       │
+        │       ▼
+        │   Завершается вся thread group
+        │
+        └── ignored → signal discarded
 ```
 
 ## Короткая модель
