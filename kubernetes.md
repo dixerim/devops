@@ -537,7 +537,7 @@ controller создаёт/обновляет/удаляет API objects
 другие components доводят это до runtime
 ```
 
-Пример:
+Пример YAML для ConfigMap:
 
 ```text
 Deployment object
@@ -557,7 +557,7 @@ Linux processes
 
 Не путать с Linux namespace.
 
-Минимальный YAML:
+Минимальный YAML для Namespace:
 
 ```yaml
 apiVersion: v1
@@ -640,7 +640,7 @@ Pod содержит один или несколько containers, которы
 могут совместно использовать volumes
 ```
 
-Минимальный YAML:
+Минимальный YAML для Pod:
 
 ```yaml
 apiVersion: v1
@@ -837,7 +837,7 @@ replicas → СКОЛЬКО Pods нужно
 template → КАК создать новый Pod
 ```
 
-Пример YAML для static local PV:
+Пример YAML для ReplicaSet:
 
 ```yaml
 apiVersion: apps/v1
@@ -859,7 +859,7 @@ spec:
           image: example/api:1.0
 ```
 
-Пример:
+Пример YAML для Secret:
 
 ```text
 desired = 3
@@ -876,7 +876,7 @@ ReplicaSet обычно не создают вручную, потому что 
 
 Реальную работу выполняет Deployment controller: он наблюдает Deployment object и создаёт/обновляет ReplicaSets через Kubernetes API.
 
-Минимальный YAML:
+Минимальный YAML для Deployment:
 
 ```yaml
 apiVersion: apps/v1
@@ -1046,7 +1046,7 @@ StatefulSet НЕ реплицирует application data между replicas.
 
 Реальную работу выполняет DaemonSet controller внутри `kube-controller-manager`: он создаёт/удаляет Pods при появлении, исчезновении или изменении подходящих Nodes.
 
-Пример YAML для static local PV:
+Пример YAML для DaemonSet:
 
 ```yaml
 apiVersion: apps/v1
@@ -1164,7 +1164,7 @@ Never     → retry через новый Pod object
 
 Реальную работу выполняет CronJob controller внутри `kube-controller-manager`: он смотрит на расписание и создаёт Job objects в нужные моменты.
 
-Пример YAML:
+Пример YAML для CronJob:
 
 ```yaml
 apiVersion: batch/v1
@@ -1204,7 +1204,7 @@ Pod
 
 ConfigMap хранит набор string keys и values.
 
-Пример:
+Пример YAML для ConfigMap:
 
 ```yaml
 apiVersion: v1
@@ -1247,7 +1247,7 @@ Mounted files могут обновляться позже; приложение
 
 Secret похож на ConfigMap по способам использования, но предназначен для паролей, tokens, certificates и других sensitive values.
 
-Пример:
+Пример YAML для Secret:
 
 ```yaml
 apiVersion: v1
@@ -1281,7 +1281,7 @@ Requests и limits задаёт автор workload manifest: разработч
 
 Они задаются на container level в `spec.containers[].resources`.
 
-Пример:
+Пример YAML для Deployment с requests и limits:
 
 ```yaml
 apiVersion: apps/v1
@@ -1457,7 +1457,7 @@ Pod получает `Guaranteed`, если у каждого container зада
 request == limit
 ```
 
-Пример:
+Пример ресурсов container для QoS-класса Guaranteed:
 
 ```yaml
 resources:
@@ -1473,7 +1473,7 @@ resources:
 
 Pod получает `Burstable`, если он не `Guaranteed`, но хотя бы у одного container задан request или limit.
 
-Пример:
+Пример ресурсов container для QoS-класса Burstable:
 
 ```yaml
 resources:
@@ -1488,7 +1488,7 @@ resources:
 
 Pod получает `BestEffort`, если ни у одного container не заданы ни requests, ни limits.
 
-Пример:
+Пример ресурсов container для QoS-класса BestEffort:
 
 ```yaml
 resources: {}
@@ -1868,7 +1868,7 @@ Kubernetes не подменяет `getaddrinfo()`.
 
 Service не создаёт Pods.
 
-Пример YAML:
+Пример YAML для Service типа ClusterIP:
 
 ```yaml
 apiVersion: v1
@@ -1986,7 +1986,7 @@ Pod IP → физически нужная Node/Pod
 
 Запрос на `NodeIP:nodePort` попадает на выбранную Node, где правила Service networking перенаправляют его к одному из backend Pods.
 
-Пример YAML:
+Пример YAML для Service типа NodePort:
 
 ```yaml
 apiVersion: v1
@@ -2129,7 +2129,7 @@ clusterIP: None
 этому Service нужен внешний load-balanced endpoint
 ```
 
-Пример YAML:
+Пример YAML для Service типа LoadBalancer:
 
 ```yaml
 apiVersion: v1
@@ -2329,7 +2329,7 @@ backend
 
 Ingress object сам не proxy.
 
-Пример YAML:
+Пример YAML для Ingress:
 
 ```yaml
 apiVersion: networking.k8s.io/v1
@@ -2507,7 +2507,7 @@ Kubernetes управляет связью workload ↔ storage, но сам н�
 PV = конкретный storage resource, известный Kubernetes
 ```
 
-Пример YAML:
+Пример YAML для PersistentVolume:
 
 ```yaml
 apiVersion: v1
@@ -2552,7 +2552,7 @@ Pod'ом
 PVC = "дай мне storage с такими требованиями"
 ```
 
-Пример YAML:
+Пример YAML для PersistentVolumeClaim:
 
 ```yaml
 apiVersion: v1
@@ -2623,7 +2623,7 @@ StorageClass fast-ssd
 storage implementation
 ```
 
-Пример YAML для dynamic provisioning:
+Пример YAML для StorageClass с dynamic provisioning:
 
 ```yaml
 apiVersion: storage.k8s.io/v1
@@ -2909,7 +2909,7 @@ Scheduler выбирает не просто Node, куда помещаются
 
 ## 58. Local PersistentVolume YAML
 
-Пример local PV:
+Пример YAML для local PersistentVolume:
 
 ```yaml
 apiVersion: v1
@@ -2944,7 +2944,7 @@ nodeAffinity
 → говорит, на какой Node этот storage физически существует
 ```
 
-PVC:
+Пример YAML для PersistentVolumeClaim:
 
 ```yaml
 apiVersion: v1
@@ -2961,7 +2961,7 @@ spec:
       storage: 100Gi
 ```
 
-Pod:
+Фрагмент YAML для Pod, использующего этот PVC:
 
 ```yaml
 spec:
