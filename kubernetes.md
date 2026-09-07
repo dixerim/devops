@@ -966,7 +966,7 @@ Rollback делает предыдущий Pod template снова требуе�
 
 Он создаёт Pods напрямую, без ReplicaSet.
 
-Пример YAML для PVC, который может связаться с PV выше:
+Пример YAML для StatefulSet с отдельным PVC для каждой реплики:
 
 ```yaml
 apiVersion: apps/v1
@@ -1094,7 +1094,7 @@ storage agent
 
 Реальную работу выполняет Job controller внутри `kube-controller-manager`: он создаёт Pods и следит за успешными/неуспешными attempts.
 
-Пример YAML для PVC, который может связаться с PV выше:
+Пример YAML для Job:
 
 ```yaml
 apiVersion: batch/v1
