@@ -435,19 +435,19 @@ read()
 
 Категории:
 
-**user** → код userspace.
+**user (`us`)** → код userspace.
 
-**system** → код ядра.
+**system (`sy`)** → код ядра.
 
-**iowait** → CPU idle, пока есть ожидающий I/O.
+**iowait (`wa`)** → CPU idle, пока есть ожидающий I/O.
 
-**irq** → hardware interrupts.
+**irq (`hi`)** → hardware interrupts.
 
-**softirq** → отложенная обработка событий ядра.
+**softirq (`si`)** → отложенная обработка событий ядра.
 
-**steal** → гипервизор забрал виртуальный CPU.
+**steal (`st`)** → гипервизор забрал виртуальный CPU.
 
-**nice** → сколько CPU time было потрачено в userspace процессами, у которых nice value отличается от обычного.
+**nice (`ni`)** → сколько CPU time было потрачено в userspace процессами, у которых nice value отличается от обычного.
 
 **nice value** → scheduler priority hint для обычных процессов: больше nice → процесс «уступчивее» и получает CPU менее охотно; меньше nice → выше приоритет.
 
